@@ -22,7 +22,7 @@ from collections import defaultdict
 from glob import glob
 import os
 import subprocess
-import fibs_firebase_config
+#import fibs_firebase_config
 
 
 from typing import Text, Tuple, Mapping, Set, List, Iterable, Any
@@ -112,17 +112,17 @@ def process_page(
         command = f'node util/single_index.js "{filename}" "{output_filename}"'
         subprocess.call(command, shell=True)
 
-    bucket = fibs_firebase_config.get_bucket()
-    blob = bucket.blob(f"pages/{page}.json")
-    if not blob.exists():
-        blob.upload_from_filename(
-            filename,
-            content_type='application/json')
-        bucket.blob(f"indices/{page}.json").upload_from_filename(
-            output_filename,
-            content_type='application/json')
-        return True
-    return False
+    #bucket = fibs_firebase_config.get_bucket()
+    #blob = bucket.blob(f"pages/{page}.json")
+    #if not blob.exists():
+        #blob.upload_from_filename(
+            #filename,
+            #content_type='application/json')
+        #bucket.blob(f"indices/{page}.json").upload_from_filename(
+            #output_filename,
+            #content_type='application/json')
+        #return True
+    return True
 
 
 def read_categories(
