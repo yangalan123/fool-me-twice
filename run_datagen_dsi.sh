@@ -50,7 +50,8 @@ cd /net/scratch/chenghao/fm2
         #for maxlen1 in 300
         ##for maxlen in 25
         #do
-for model in T0pp
+#for model_name in bigscience/T0pp
+for model_name in "bigscience/T0pp" "google/flan-t5-xxl"
 do
 #file=./output_chrome_quality/first_${maxlen0}_rest_${maxlen1}/${model}/agent_${agent}/results.json
 #save_key=random_summary_full_${maxlen1}
@@ -58,21 +59,26 @@ do
 save_key=gold_evidence_agent
 #root_dir="/net/scratch/chenghao/fm2/evaluation/${save_key}"
 root_dir="/net/scratch/chenghao/fm2/pragsum_dataset/AgentTraining_zeroshot_qa_t0"
-save_root=./output_gold_evidence/${save_key}/${model}
+#save_root=./output_gold_evidence/${save_key}/${model}
+model_type=${model_name##*/}
+save_root=./output_gold_evidence/${save_key}/${model_type}
+#save_root=./output_gold_evidence/${save_key}/${model_type}_int8
 file=${save_root}/validation_predictions.p
-if test -f "$file"; then
+if test -d "$file"; then
     echo "$file exists. skipping.."
 else
     echo "$file not exists. running.."
-    python run_eval_ours_slurm.py \
+    #python run_eval_ours_slurm.py \
+    python run_t0pp_slurm.py \
         --dataset_name custom \
         --dataset_config_name ${root_dir}\
         --dataset_name2 "None" \
         --dataset_config_name2 "" \
         --template_name "Answer Given options" \
-        --model_name_or_path bigscience/${model} \
+        --model_name_or_path ${model_name} \
         --output_dir ${save_root} \
-        --preserve_meta_info \
-        --parallelize
+        --preserve_meta_info
+        #--preserve_meta_info \
+        #--parallelize
 fi
 done

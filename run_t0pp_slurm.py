@@ -37,6 +37,7 @@ from transformers import (
     AutoConfig,
     AutoTokenizer,
     default_data_collator,
+    AutoModelForSeq2SeqLM
 )
 from promptsource.templates import DatasetTemplates
 
@@ -380,8 +381,11 @@ def main():
     model = ModelBase.from_config(
         config=config,
         model_name_or_path=args.model_name_or_path,
-        parallelize=args.parallelize
+        parallelize=args.parallelize,
+        load_in_8bit=True,
+        device_map="auto",
     )
+    # model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name_or_path, config=config, load_in_8bit=True, device_map="auto")
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
