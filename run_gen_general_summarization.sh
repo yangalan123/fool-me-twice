@@ -1,8 +1,12 @@
 #for domain in "Las_Vegas" "Phoenix" "Toronto"
 #root_dir="/data/yelp/50reviews/pragsum_dataset/city"
 root_dir="/data/chenghao/fool-me-twice/pragsum_dataset/"
-num_output_sample=1
-num_output_sample_per_batch=1
+# for normal
+#num_output_sample=1
+#num_output_sample_per_batch=1
+# for best-of-k
+num_output_sample=16
+num_output_sample_per_batch=8
 #for domain in "Toronto" "Phoenix"
 #for domain in "Las_Vegas" "Phoenix" "Toronto"
 #for domain in "Montreal" "Champaign" "Pittsburgh" "Scarborough"
