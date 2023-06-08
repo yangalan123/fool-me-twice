@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --mail-user=chenghao@uchicago.edu
 #SBATCH --mail-type=ALL
-#SBATCH --output=/net/scratch/chenghao/yelp/slurm_output/%A_%a.%N.stdout
-#SBATCH --error=/net/scratch/chenghao/yelp/slurm_output/%A_%a.%N.stderr
-#SBATCH --chdir=/net/scratch/chenghao/yelp/slurm_output
+#SBATCH --output=/net/scratch/chenghao/fm2/slurm_output/%A_%a.%N.stdout
+#SBATCH --error=/net/scratch/chenghao/fm2/slurm_output/%A_%a.%N.stderr
+#SBATCH --chdir=/net/scratch/chenghao/fm2/slurm_output
 #SBATCH --partition=general
 #SBATCH --gres=gpu:a100:1
 #SBATCH --job-name=run_decsum_best_of_k
@@ -48,13 +48,13 @@ reward_model_dir="${model_root_dir}/dbt_agent_training_output_epoch${origin_epoc
 echo ${reward_model_dir}
 # as we use validation file to do training, we have to test on the test set
     #--validation_file ${root_dir}/${domain}/dev.json \
+    #--reset_cache True \
 python compute_best_of_k_performance.py \
     --target_summary_dir ${target_summary_dir} \
     --agent_model ${agent_model_dir} \
     --reward_model ${reward_model_dir} \
     --train_file ${root_dir}/${domain}/train.json \
     --validation_file ${root_dir}/${domain}/test.json \
-    --reset_cache True \
     --exp_name "_agent_as_rm" \
     --output_dir ${target_summary_dir}/${domain} \
     --test_file ${root_dir}/${domain}/test.json

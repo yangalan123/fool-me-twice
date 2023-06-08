@@ -3,10 +3,16 @@ import random
 from datasets import load_dataset
 from transformers import PretrainedConfig
 import torch
+import numpy as np
 
-process_func = lambda x: float(-torch.log(torch.tensor(x) + 1e-7))
-get_score_from_output = lambda score_list, label: \
-    [process_func(x['score']) for x in score_list if x['label'].lower() == label.lower()][0]
+process_func = lambda x: float(-np.log(x + 1e-7))
+def get_score_from_output(score_list, label):
+    # print(score_list, label)
+    for item in score_list:
+        if item['label'].lower() == label.lower():
+            return process_func(item['score'])
+# get_score_from_output = lambda score_list, label: \
+#     [process_func(x['score']) for x in score_list if x['label'].lower() == label.lower()][0]
 
 
 def loadDecSumdataset(training_args, data_args, model_args, model, tokenizer, logger, raw=False):

@@ -100,7 +100,7 @@ def setup_slurm():
     logger.info("running in slurm, ready to requeue on SIGUSR1.")
     signal.signal(signal.SIGUSR1, slurm_sigusr1_handler_fn)
     # slurm not sending the signal, so sending it myself
-    time_to_live = 14300  # just a bit less than 4 hrs
+    time_to_live = 39600  # just a bit less than 4 hrs
     schedule_death(time_to_live)
 
 task_to_keys = {

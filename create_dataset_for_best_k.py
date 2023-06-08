@@ -17,6 +17,7 @@ from transformers.trainer_utils import get_last_checkpoint
 from trl import AutoModelForSeq2SeqLMWithValueHead, AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer, set_seed
 from trl.core import LengthSampler
 from peft import LoraConfig, get_peft_model, prepare_model_for_int8_training, TaskType
+from tqdm import trange, tqdm
 
 # from utils import loadDecSumdataset
 
@@ -82,7 +83,7 @@ def setup_slurm():
     logger.info("running in slurm, ready to requeue on SIGUSR1.")
     signal.signal(signal.SIGUSR1, slurm_sigusr1_handler_fn)
     # slurm not sending the signal, so sending it myself
-    time_to_live = 14300  # just a bit less than 4 hrs
+    time_to_live = 39600  # just a bit less than 4 hrs
     schedule_death(time_to_live)
 
 
@@ -292,7 +293,7 @@ if __name__ == '__main__':
     #     generation_kwargs['max_length'] = tokenizer.model_max_length
     # else:
     generation_kwargs["max_new_tokens"] = data_args.max_target_length
-    sent_kwargs = {"return_all_scores": True, "function_to_apply": "none", "batch_size": training_args.per_device_train_batch_size}
+    sent_kwargs = {"return_all_scores": True, "function_to_apply": "softmax", "batch_size": training_args.per_device_train_batch_size}
 
     # if script_args.use_validation_dataset:
     #     dataset_used_for_rej = eval_dataset
@@ -312,58 +313,65 @@ if __name__ == '__main__':
         # train_dataloader = DataLoader(dataset_used_for_rej, batch_size=training_args.per_device_train_batch_size, collate_fn=collater)
         all_outputs = []
         # for batch in tqdm(train_dataloader):
-        processed_dataset_for_pipe = dataset_used_for_rej
+        # processed_dataset_for_pipe = dataset_used_for_rej
         # if split == "dev":
         _dataset = dataset_used_for_rej.map(add_gt_evidence, num_proc=4)
         processed_dataset_for_pipe = KeyPairDataset(_dataset, "sentence1", "sentence2")
         with torch.no_grad():
-            outputs = clf_pipe(processed_dataset_for_pipe, **sent_kwargs)
+            # outputs = list(clf_pipe(processed_dataset_for_pipe, **sent_kwargs))
+            outputs = []
+            for out in tqdm(clf_pipe(processed_dataset_for_pipe, **sent_kwargs), desc="Producing outputs", total=len(processed_dataset_for_pipe), leave=False, position=0):
+                outputs.append(out)
+            print("producing outputs done")
             labels = dataset_used_for_rej[data_args.label_column]
             _outputs = [get_score_from_output(x, label) for x, label in zip(outputs, labels)]
             # for batch_i, _item in enumerate(batch):
             all_keys = _dataset[0].keys()
-            for output_i in range(len(_outputs)):
-                new_dict = {}
-                for key in all_keys:
-                    # new_dict[key] = copy.deepcopy(batch[key][batch_i])
-                    try:
-                        if torch.is_tensor(_dataset[key][output_i]):
-                            if len(_dataset[key][output_i]) == 1:
-                                new_dict[key] = _dataset[key][output_i].item()
-                            else:
-                                print(f"Warning: tensor with length > 1: {key}" + str(_dataset[key][output_i]))
-                                exit()
-                                new_dict[key] = _dataset[key][output_i].tolist()
-                        elif isinstance(_dataset[key][output_i], list):
-                            new_dict[key] = [x.item() if torch.is_tensor(x) else x for x in _dataset[key][output_i] ]
-                        else:
-                            new_dict[key] = copy.deepcopy(_dataset[key][output_i])
-                    except Exception as e:
-                        print("key:", key)
-                        print("batch_i:", output_i)
-                        print(type(_dataset[key]))
-                        print(_dataset[key][output_i])
-                        print("Exception:", e)
-                        traceback.print_exc()
-                        exit()
-                # for _key in _item:
-                #     try:
-                #         new_dict[_key] = _item[_key]
-                #     except Exception as e:
-                #         print(e, "\nKey:" + _key + "\nItem:" + str(_item))
-                #         traceback.print_exc()
-                #         exit()
-                # new_dict["difference"] = abs(new_dict["label"] - float(_outputs[batch_i]))
-                # new_dict['difference_sign'] = (float(_outputs[batch_i]) - new_dict['label']) >= 0
-                new_dict['difference'] = float(_outputs[output_i])
-                # for key in batch:
-                #     print(key, batch[key])
-                #     print(type(batch[key]))
-                # exit()
-                all_outputs.append(new_dict)
-        with open(os.path.join(save_root_dir, f"{split}_difference.json"), "w") as f:
-            for line in all_outputs:
-                f.write(json.dumps(line) + "\n")
+            new_dataset = _dataset.add_column("difference", _outputs)
+            # below code is too slow, let's use huggingface
+            # for output_i in trange(len(_outputs), desc="Processing outputs", position=1, leave=False):
+            #     new_dict = {}
+            #     for key in all_keys:
+            #         # new_dict[key] = copy.deepcopy(batch[key][batch_i])
+            #         try:
+            #             if torch.is_tensor(_dataset[key][output_i]):
+            #                 if len(_dataset[key][output_i]) == 1:
+            #                     new_dict[key] = _dataset[key][output_i].item()
+            #                 else:
+            #                     print(f"Warning: tensor with length > 1: {key}" + str(_dataset[key][output_i]))
+            #                     exit()
+            #                     new_dict[key] = _dataset[key][output_i].tolist()
+            #             elif isinstance(_dataset[key][output_i], list):
+            #                 new_dict[key] = [x.item() if torch.is_tensor(x) else x for x in _dataset[key][output_i] ]
+            #             else:
+            #                 new_dict[key] = copy.deepcopy(_dataset[key][output_i])
+            #         except Exception as e:
+            #             print("key:", key)
+            #             print("batch_i:", output_i)
+            #             print(type(_dataset[key]))
+            #             print(_dataset[key][output_i])
+            #             print("Exception:", e)
+            #             traceback.print_exc()
+            #             exit()
+            #     # for _key in _item:
+            #     #     try:
+            #     #         new_dict[_key] = _item[_key]
+            #     #     except Exception as e:
+            #     #         print(e, "\nKey:" + _key + "\nItem:" + str(_item))
+            #     #         traceback.print_exc()
+            #     #         exit()
+            #     # new_dict["difference"] = abs(new_dict["label"] - float(_outputs[batch_i]))
+            #     # new_dict['difference_sign'] = (float(_outputs[batch_i]) - new_dict['label']) >= 0
+            #     new_dict['difference'] = float(_outputs[output_i])
+            #     # for key in batch:
+            #     #     print(key, batch[key])
+            #     #     print(type(batch[key]))
+            #     # exit()
+            #     all_outputs.append(new_dict)
+        # with open(os.path.join(save_root_dir, f"{split}_difference.json"), "w") as f:
+        #     for line in all_outputs:
+        #         f.write(json.dumps(line) + "\n")
+        new_dataset.to_json(os.path.join(save_root_dir, f"{split}_difference.json"))
             # batch = {k: v.to(training_args.device) for k, v in batch.items()}
             # with torch.no_grad():
             #     outputs = sentiment_pipe(batch["source_text"], **sent_kwargs)

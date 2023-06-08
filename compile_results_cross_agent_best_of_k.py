@@ -17,35 +17,40 @@ if __name__ == '__main__':
     parser.add_argument("--exp_name", default='best-of-16-validation-trained-rm-test-test', type=str)
     parser.add_argument("--all_mses_suffix", default='', type=str)
     args = parser.parse_args()
-    domain_dirs = glob.glob(f"{args.target_summary_root_dir}/*")
+    domain_dirs = glob.glob(f"/net/scratch/chenghao/fm2/pragsum_dataset/AgentTraining_domain_wise/*")
     domain_values = [os.path.basename(domain_dir) for domain_dir in domain_dirs]
     domain_values.sort()
     for key, explanation in zip(['fitness_min', "summary_min", "delta-best-avg", "delta-mse-best-mse-original"], ["best_summary v.s. model score", "best_summary v.s. human score",
                                                                           "Delta Figure (best_summary - average summary)",
                                                                           "Delta Figure (MSE(best-human), MSE(original-human))"]):
         res = []
-        split = args.subdir.split("_")[0]
+        # split = args.subdir.split("_")[0]
+        split = "test"
         all_exists = True
+        print("Now Computing: ", key)
         for domain_value1 in domain_values:
             res.append([domain_value1, ])
             for domain_value2 in domain_values:
-                eval_target = os.path.join(args.target_summary_root_dir, domain_value2, args.subdir, f"all_mses_{split}_{domain_value1}{args.all_mses_suffix}.pkl")
+                # [Attention]: Here for FM2, as we change the logic for loading summary in compute_best_of_k_performance.py as well as the storage logic, so we need to change the order of subdir and domain_value2
+                eval_target = os.path.join(args.target_summary_root_dir, args.subdir, domain_value2, f"all_mses_{split}_{domain_value1}{args.all_mses_suffix}.pkl")
                 if os.path.exists(eval_target):
                     data = pickle.load(open(eval_target, "rb"))
                     # performance = 100 * data['avg']
                     if key in data:
-                        performance = 100 * data[key]
+                        performance = 1 * data[key]
                     else:
                         if key == "delta-best-avg":
-                            performance = 100 * (data['summary_min'] - data['summary_mean'])
+                            performance = 1 * (data['summary_min'] - data['summary_mean'])
                         elif key == "delta-mse-best-mse-original":
-                            performance = 100 * (data['summary_min'] - data['normal'])
+                            performance = 1 * (data['summary_min'] - data['normal'])
                     # performance = 100 * data['summary_min']
                     performance = f"{performance:.2f}"
                     res[-1].append(performance)
                 else:
+                    # print(f"{eval_target} does not exist")
                     res[-1].append("Running")
                     all_exists = False
+                    # exit()
 
         print("\t&\t".join(["Model Trained on", ] + domain_values))
         for line in res:
@@ -68,13 +73,13 @@ if __name__ == '__main__':
             ax = sns.heatmap(df, annot=True, fmt='.2f', cmap=heatmap_cmaps[2] if "delta" not in key else heatmap_cmaps[3])
             ax.xaxis.tick_top()
             # plt.title(f"100 * MSE of DecSum on {exp_name} setting (Percentile Regression)")
-            plt.title(f"100 * MSE on Best-of-K setting {explanation}")
+            plt.title(f"binary-cross-entropy on Best-of-K setting {explanation}")
             plt.xlabel("Model Trained on")
             plt.ylabel("Model Evaluated on")
             exp_name = args.exp_name + "_" + args.subdir
             visualization_dir = os.path.join("visualization", exp_name + "_{}".format(key))
             os.makedirs(visualization_dir, exist_ok=True)
-            plt.savefig(os.path.join(visualization_dir, "mse_heatmap.png"))
+            plt.savefig(os.path.join(visualization_dir, "bxent_heatmap.png"))
             plt.show()
             # clear figure
             plt.clf()

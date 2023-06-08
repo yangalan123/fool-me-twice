@@ -25,7 +25,7 @@ readarray -t domains < <(find "${root_dir}" -maxdepth 1 -type d ! -path "${root_
 #printf "%s\n" "${domains[@]}"
 #slurm_id=2
 #echo "test-${domains[${slurm_id}]}"
-#SLURM_ARRAY_TASK_ID=1
+SLURM_ARRAY_TASK_ID=1
 domain=${domains[${SLURM_ARRAY_TASK_ID}]}
 output_root_dir=${root_dir}
 origin_epoch=1
@@ -96,7 +96,7 @@ do
                 --save_steps 2000 \
                 --eval_steps 2000 \
                 --max_seq_length 2048 \
-                --per_device_train_batch_size 4 \
+                --per_device_train_batch_size 32 \
                 --learning_rate 2e-5 \
                 --num_train_epochs ${epoch} \
                 --save_total_limit 5 \

@@ -217,7 +217,7 @@ if __name__ == '__main__':
     agent_model_dir = script_args.agent_model
 
     for reward_model_dir in reward_model_dirs:
-        domain_info = reward_model_dir.split("/")[domain_index]
+        rm_domain_info = reward_model_dir.split("/")[domain_index]
         logger.info(f"Using reward model {reward_model_dir}")
         reward_pipe = pipeline(task="text-classification", model=reward_model_dir, device=0)
         sentiment_pipe = pipeline(task="text-classification", model=agent_model_dir, device=0)
@@ -237,12 +237,11 @@ if __name__ == '__main__':
         # for split, file_path in zip(['train', 'dev'], [data_args.train_file, data_args.validation_file]):
             _raw_dataset = raw_datasets[split]
             # fixed using train_sample_xxx in post_processing_summary.py
-            output_summary_dir = os.path.join(script_args.target_summary_dir, "train" + script_args.target_summary_suffix)
             processed_summary_dump_path = os.path.join(os.path.dirname(data_args.test_file), f"{split}_with_summary_longt5.ds")
             processed_summary_dump = datasets.Dataset.load_from_disk(processed_summary_dump_path)
             # output_prediction_files = glob.glob(os.path.join(output_summary_dir, "generated_predictions_*"))
             # create evaluation output dir in the parent dir of the file_path
-            output_eval_dir = os.path.join(os.path.dirname(file_path), f"evaluation_non_pragmatic_{domain_info}{script_args.exp_name}")
+            output_eval_dir = os.path.join(os.path.dirname(file_path), f"evaluation_non_pragmatic_{rm_domain_info}{script_args.exp_name}")
             os.makedirs(output_eval_dir, exist_ok=True)
             summary_data = []
             summary_pointer_left = 0
@@ -296,7 +295,7 @@ if __name__ == '__main__':
                 "claim": all_claims,
                 "evidence": all_original_evidences
             })
-            cache_path = os.path.join(output_eval_dir, f"best_of_{script_args.target_summary_suffix}_cache_{split}_{domain_info}_outputs.pt")
+            cache_path = os.path.join(output_eval_dir, f"best_of_{script_args.target_summary_suffix}_cache_{split}_{rm_domain_info}_outputs.pt")
             SHAkey = generate_sha256_hash(
                 ["Agent: " + agent_model_dir, " Reward: " + reward_model_dir, " Data: " + file_path])
             try:
@@ -401,9 +400,15 @@ if __name__ == '__main__':
                     all_mses[output_filename.replace(".pkl", "").replace(f"eval_{split}_", "")] = res['avg']
                     if "normal" not in json_filename:
                         res['num_summaries'] = len(summary_data[0]["summary"])
-                        res["eval_summary_dir"] = output_summary_dir
+                        # res["eval_summary_dir"] = output_summary_dir
+                        res["eval_summary_dir"] = processed_summary_dump_path
                     json.dump(res, f, indent=4)
             all_mses['num_summaries'] = len(summary_data[0]["summary"])
-            pickle.dump(all_mses, open(os.path.join(output_summary_dir, f"all_mses_{split}_{domain_info}{script_args.exp_name}.pkl"), "wb"))
+            # if "agent_as_rm" in script_args.exp_name:
+            ds_domain_info = file_path.split("/")[-2]
+            output_summary_dir = os.path.join(script_args.target_summary_dir, "train" + script_args.target_summary_suffix, ds_domain_info)
+            if not os.path.exists(output_summary_dir):
+                os.makedirs(output_summary_dir)
+            pickle.dump(all_mses, open(os.path.join(output_summary_dir, f"all_mses_{split}_{rm_domain_info}{script_args.exp_name}.pkl"), "wb"))
             print(all_mses)
 
