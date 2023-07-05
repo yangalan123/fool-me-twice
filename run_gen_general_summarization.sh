@@ -1,6 +1,27 @@
+#!/bin/bash
+#SBATCH --mail-user=chenghao@uchicago.edu
+#SBATCH --mail-type=ALL
+#SBATCH --output=/net/scratch/chenghao/fm2/slurm_output/%A_%a.%N.stdout
+#SBATCH --error=/net/scratch/chenghao/fm2/slurm_output/%A_%a.%N.stderr
+#SBATCH --chdir=/net/scratch/chenghao/fm2/slurm_output
+#SBATCH --partition=general
+#SBATCH --gres=gpu:a100:4
+#SBATCH --job-name=run_gen_general_summarization
+#SBATCH --nodes=1
+#SBATCH --mem=100gb
+#SBATCH --exclude=g[006,009]
+#SBATCH --ntasks=4
+#SBATCH --time=11:00:00
+#SBATCH --signal=SIGUSR1@120
+##SBATCH --gres=gpu:a40:1
+
 #for domain in "Las_Vegas" "Phoenix" "Toronto"
 #root_dir="/data/yelp/50reviews/pragsum_dataset/city"
-root_dir="/data/chenghao/fool-me-twice/pragsum_dataset"
+echo $PATH
+source ~/miniconda3/etc/profile.d/conda.sh
+cd /net/scratch/chenghao/fm2
+conda activate /home/chenghao/env37
+root_dir="/net/scratch/chenghao/fm2/pragsum_dataset"
 # for normal
 #num_output_sample=1
 #num_output_sample_per_batch=1
@@ -25,6 +46,7 @@ do
     --validation_file ${root_dir}/dummy.json \
     --test_file ${root_dir}/GeneralContext.json \
     --text_column "text" \
+    --seed 2023 \
     --summary_column "text" \
     --source_prefix "summarize: " \
     --num_output_sample ${num_output_sample} \

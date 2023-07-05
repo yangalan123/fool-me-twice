@@ -1,11 +1,12 @@
 #!/bin/bash
+# scripts to train reward model by observing the difference towards ground truth
 #SBATCH --mail-user=chenghao@uchicago.edu
 #SBATCH --mail-type=ALL
 #SBATCH --output=/net/scratch/chenghao/fm2/slurm_output/%A_%a.%N.stdout
 #SBATCH --error=/net/scratch/chenghao/fm2/slurm_output/%A_%a.%N.stderr
 #SBATCH --chdir=/net/scratch/chenghao/fm2/slurm_output
 #SBATCH --partition=general
-#SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:a100:4
 #SBATCH --job-name=run_decsum_agent_training
 #SBATCH --nodes=1
 #SBATCH --mem=100gb
@@ -85,7 +86,7 @@ do
           --max_eval_samples 2000 \
           --save_steps 2000 \
           --eval_steps 2000 \
-          --per_device_train_batch_size 4 \
+          --per_device_train_batch_size 2 \
           --learning_rate 2e-5 \
           --num_train_epochs ${epoch} \
           --save_total_limit 5 \

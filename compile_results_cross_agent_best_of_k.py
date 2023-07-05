@@ -77,7 +77,7 @@ if __name__ == '__main__':
             plt.xlabel("Model Trained on")
             plt.ylabel("Model Evaluated on")
             exp_name = args.exp_name + "_" + args.subdir
-            visualization_dir = os.path.join("visualization", exp_name + "_{}".format(key))
+            visualization_dir = os.path.join("visualization", exp_name + f"_{args.all_mses_suffix}" + "_{}".format(key))
             os.makedirs(visualization_dir, exist_ok=True)
             plt.savefig(os.path.join(visualization_dir, "bxent_heatmap.png"))
             plt.show()

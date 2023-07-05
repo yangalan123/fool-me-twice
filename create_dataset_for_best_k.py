@@ -34,6 +34,8 @@ import threading
 import time
 from util.DecSumDataset import get_score_from_output, process_func, loadDecSumdataset
 from transformers.pipelines.pt_utils import KeyDataset, KeyPairDataset
+from util.DecSumDataset import load_summary_and_create_context_dict
+from datasets import concatenate_datasets
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +230,8 @@ class ScriptArguments:
             )
         },
     )
+    use_noise_data: bool = field(default=False, metadata={"help": "use noise dataset"})
+    output_ckpt_freq: int = field(default=1500, metadata={"help": "output checkpoint frequency"})
     # use_validation_dataset: Optional[bool] = field(default=False, metadata={"help": "use validation dataset"})
     # num_samples_per_instance: Optional[int] = field(default=1,
     #                                                 metadata={"help": "number of samples to be generated per instance"})
@@ -237,11 +241,44 @@ class ScriptArguments:
     #         if self.num_shared_layers != 0:
     #             print("WARNING: num_shared_layers is ignored when using lora")
 
+
 def add_gt_evidence(example):
     if "sentence1" not in example:
         example['sentence1'] = example['text']
-    example['sentence2'] = example['sentence2']  + " ".join([x['text'] for x in example['gold_evidence']])
+    example['sentence2'] = example['sentence2'] + " ".join([x['text'] for x in example['gold_evidence']])
     return example
+
+
+def add_sampled_summary_evidence(example, context_dict, summary_sample=100):
+    new_batch = {}
+    # title = example['wiki-page']
+    example_keys = list(example.keys())
+    example_keys.append("sentence1")
+    example_keys = set(example_keys)
+    for key in example_keys:
+        if key not in new_batch:
+            new_batch[key] = []
+    for title_i, title in enumerate(example['wiki-page']):
+        context_pool = set(context_dict[title]['summary_longt5'])
+        for summary_j, summary in enumerate(
+                random.sample(context_pool,
+                              min(summary_sample, len(context_pool)
+                                  )
+                              )
+        ):
+            for key in example_keys:
+                if key not in {"sentence1", "sentence2"}:
+                    new_batch[key].append(example[key][title_i])
+                else:
+                    if key == "sentence1":
+                        if "sentence1" not in example:
+                            new_batch[key].append(example['text'][title_i])
+                        else:
+                            new_batch[key].append(example['sentence1'][title_i])
+                    else:
+                        new_batch[key].append(example['sentence2'][title_i] + " " + summary)
+    return new_batch
+
 
 if __name__ == '__main__':
     tqdm.pandas()
@@ -284,16 +321,21 @@ if __name__ == '__main__':
     # dataset = build_imdb_dataset(tokenizer)
     train_dataset, eval_dataset, test_dataset = loadDecSumdataset(training_args, data_args, script_args, model,
                                                                   tokenizer, logger, raw=True)
-    generation_kwargs = {"num_beams": 1, "do_sample": True, "eos_token_id": -1}
-    if "gpt2" in script_args.generator_model_name:
-        generation_kwargs['pad_token_id'] = tokenizer.eos_token_id
-
-    # if decoder_only_flag:
-    #     # for general decoder-only model, we need to set the max_length to the model's max length
-    #     generation_kwargs['max_length'] = tokenizer.model_max_length
-    # else:
-    generation_kwargs["max_new_tokens"] = data_args.max_target_length
-    sent_kwargs = {"return_all_scores": True, "function_to_apply": "softmax", "batch_size": training_args.per_device_train_batch_size}
+    # title_to_summaries_dict = load_summary_and_create_context_dict(target_summary_dir="/net/scratch/chenghao/fm2/general_summary_longt5/GeneralContext/train_sample_40")
+    title_to_summaries_dict = load_summary_and_create_context_dict(
+        target_summary_dir="/net/scratch/chenghao/fm2/general_summary_longt5/GeneralContext/train_sample_16")
+    # use offline generated summaries to save GPU memory, below codes are deprecated
+    # generation_kwargs = {"num_beams": 1, "do_sample": True, "eos_token_id": -1}
+    # if "gpt2" in script_args.generator_model_name:
+    #     generation_kwargs['pad_token_id'] = tokenizer.eos_token_id
+    #
+    # # if decoder_only_flag:
+    # #     # for general decoder-only model, we need to set the max_length to the model's max length
+    # #     generation_kwargs['max_length'] = tokenizer.model_max_length
+    # # else:
+    # generation_kwargs["max_new_tokens"] = data_args.max_target_length
+    sent_kwargs = {"return_all_scores": True, "function_to_apply": "softmax",
+                   "batch_size": training_args.per_device_train_batch_size}
 
     # if script_args.use_validation_dataset:
     #     dataset_used_for_rej = eval_dataset
@@ -309,25 +351,57 @@ if __name__ == '__main__':
     def collater(data):
         return dict((key, [d[key] for d in data]) for key in data[0])
 
+
     for dataset_used_for_rej, split in zip([train_dataset, eval_dataset, test_dataset], ["train", "dev", "test"]):
         # train_dataloader = DataLoader(dataset_used_for_rej, batch_size=training_args.per_device_train_batch_size, collate_fn=collater)
-        all_outputs = []
-        # for batch in tqdm(train_dataloader):
-        # processed_dataset_for_pipe = dataset_used_for_rej
-        # if split == "dev":
-        _dataset = dataset_used_for_rej.map(add_gt_evidence, num_proc=4)
-        processed_dataset_for_pipe = KeyPairDataset(_dataset, "sentence1", "sentence2")
-        with torch.no_grad():
-            # outputs = list(clf_pipe(processed_dataset_for_pipe, **sent_kwargs))
-            outputs = []
-            for out in tqdm(clf_pipe(processed_dataset_for_pipe, **sent_kwargs), desc="Producing outputs", total=len(processed_dataset_for_pipe), leave=False, position=0):
-                outputs.append(out)
-            print("producing outputs done")
-            labels = dataset_used_for_rej[data_args.label_column]
-            _outputs = [get_score_from_output(x, label) for x, label in zip(outputs, labels)]
-            # for batch_i, _item in enumerate(batch):
-            all_keys = _dataset[0].keys()
-            new_dataset = _dataset.add_column("difference", _outputs)
+        flag_all_complete = False
+        tmp_path = os.path.join(save_root_dir, f"{split}{'_noise' if script_args.use_noise_data else ''}_difference.output.tmp")
+        if os.path.exists(tmp_path):
+            logger.info(f"tmp file {tmp_path} exists, loading from it")
+            all_outputs, index = torch.load(tmp_path)
+        else:
+            all_outputs, index = [], 0
+        gt_dataset = dataset_used_for_rej.map(add_gt_evidence, num_proc=4)
+        if script_args.use_noise_data:
+            noise_dataset = dataset_used_for_rej.map(
+                lambda x: add_sampled_summary_evidence(x, context_dict=title_to_summaries_dict), batched=True,
+                num_proc=4)
+            # processed_dataset = concatenate_datasets([gt_dataset, noise_dataset])
+            processed_dataset = noise_dataset
+        else:
+            processed_dataset = gt_dataset
+        if len(all_outputs) == len(processed_dataset):
+            flag_all_complete = True
+
+        # for start_idx in range(index, len(processed_dataset), script_args.output_ckpt_freq):
+        # use tqdm to rewrite the progress bar
+        for start_idx in tqdm(range(index, len(processed_dataset), script_args.output_ckpt_freq), desc=f"Processing {split} dataset", leave=False, position=0):
+            _processed_dataset = processed_dataset.select(range(start_idx,
+                                                                min(start_idx + script_args.output_ckpt_freq, len(processed_dataset))
+                                                                ))
+            # dataset_used_for_rej = dataset_used_for_rej.select(range(index, index + script_args.output_ckpt_freq))
+            # for batch in tqdm(train_dataloader):
+            # processed_dataset_for_pipe = dataset_used_for_rej
+            # if split == "dev":
+            # processed_dataset = dataset_used_for_rej.map(add_gt_evidence, num_proc=4)
+            processed_dataset_for_pipe = KeyPairDataset(_processed_dataset, "sentence1", "sentence2")
+            with torch.no_grad():
+                # outputs = list(clf_pipe(processed_dataset_for_pipe, **sent_kwargs))
+                # outputs = []
+                for out in tqdm(clf_pipe(processed_dataset_for_pipe, **sent_kwargs), desc="Producing outputs",
+                                total=len(processed_dataset_for_pipe), leave=False, position=1):
+                    all_outputs.append(out)
+                    if (len(all_outputs) - index) % script_args.output_ckpt_freq == 0:
+                        torch.save((all_outputs, len(all_outputs)), tmp_path)
+                        logger.info(f"saved tmp file to {tmp_path}")
+        print("producing outputs done")
+        # labels = dataset_used_for_rej[data_args.label_column]
+        labels = processed_dataset[data_args.label_column]
+        assert len(all_outputs) == len(labels)
+        _outputs = [get_score_from_output(x, label) for x, label in zip(all_outputs, labels)]
+        # for batch_i, _item in enumerate(batch):
+        # all_keys = processed_dataset[0].keys()
+        new_dataset = processed_dataset.add_column("difference", _outputs)
             # below code is too slow, let's use huggingface
             # for output_i in trange(len(_outputs), desc="Processing outputs", position=1, leave=False):
             #     new_dict = {}
@@ -371,8 +445,10 @@ if __name__ == '__main__':
         # with open(os.path.join(save_root_dir, f"{split}_difference.json"), "w") as f:
         #     for line in all_outputs:
         #         f.write(json.dumps(line) + "\n")
-        new_dataset.to_json(os.path.join(save_root_dir, f"{split}_difference.json"))
-            # batch = {k: v.to(training_args.device) for k, v in batch.items()}
-            # with torch.no_grad():
-            #     outputs = sentiment_pipe(batch["source_text"], **sent_kwargs)
-            #     batch["sentiment"] = torch.tensor([x['label'] for x in outputs]).to(training_args.device)
+        # new_dataset.to_json(os.path.join(save_root_dir, f"{split}{'_noise' if script_args.use_noise_data else ''}_difference.json"))
+        new_dataset.to_json(
+            os.path.join(save_root_dir, f"{split}{'_noise' if script_args.use_noise_data else ''}_difference.json"))
+        # batch = {k: v.to(training_args.device) for k, v in batch.items()}
+        # with torch.no_grad():
+        #     outputs = sentiment_pipe(batch["source_text"], **sent_kwargs)
+        #     batch["sentiment"] = torch.tensor([x['label'] for x in outputs]).to(training_args.device)

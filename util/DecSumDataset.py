@@ -4,6 +4,7 @@ from datasets import load_dataset
 from transformers import PretrainedConfig
 import torch
 import numpy as np
+import os
 
 process_func = lambda x: float(-np.log(x + 1e-7))
 def get_score_from_output(score_list, label):
@@ -14,6 +15,31 @@ def get_score_from_output(score_list, label):
 # get_score_from_output = lambda score_list, label: \
 #     [process_func(x['score']) for x in score_list if x['label'].lower() == label.lower()][0]
 
+def load_summary_and_create_context_dict(root_dir="/net/scratch/chenghao/fm2/pragsum_dataset", target_summary_dir="/net/scratch/chenghao/fm2/general_summary_longt5/GeneralContext/train_sample_16"):
+    general_context = []
+    with open(os.path.join(root_dir, "GeneralContext.json"), "r") as f:
+        for line in f:
+            data = json.loads(line)
+            general_context.append(data)
+    # target_dir = "/net/scratch/chenghao/fm2/general_summary_longt5/GeneralContext/train_sample_1"
+    # target_summary_dir = "/net/scratch/chenghao/fm2/general_summary_longt5/GeneralContext/train_sample_16"
+    generated_predictions_files = [os.path.join(target_summary_dir, x) for x in os.listdir(target_summary_dir) if x.startswith("generated_predictions")]
+    for file in generated_predictions_files:
+        with open(os.path.join(target_summary_dir, file), "r") as f:
+            buf = f.read()
+            summaries = buf.split("\n\n\n")
+        assert len(summaries) % len(general_context) == 0, f"summarization number {len(summaries)} must be divisible by context number {len(general_context)}"
+        num_summary_per_context = len(summaries) // len(general_context)
+        for i in range(len(general_context)):
+            if "summary_longt5" not in general_context[i]:
+                general_context[i]["summary_longt5"] = []
+            general_context[i]["summary_longt5"].extend(summaries[i * num_summary_per_context: (i + 1) * num_summary_per_context])
+
+    context_dict = dict()
+    for i in range(len(general_context)):
+        context_dict[general_context[i]['title']] = general_context[i]
+
+    return context_dict
 
 def loadDecSumdataset(training_args, data_args, model_args, model, tokenizer, logger, raw=False):
     # Loading a dataset from your local files.

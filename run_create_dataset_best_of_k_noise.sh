@@ -72,13 +72,13 @@ do
       #output_dir=${output_root_dir}/${domain}/validation_set_rl_agent_${model_type}_random_sample_${num_samples_per_instance}_epoch${epoch}${suffix}_num_shared_layers_${num_shared_layers}_bsz_${batch_size}_minibsz_${mini_batch_size}
       #output_dir=${output_root_dir}/${domain}/reward_reform_rl_agent_${model_type}_random_sample_${num_samples_per_instance}_epoch${epoch}${suffix}_shared_layers_${num_shared_layers}_bsz_${batch_size}_mbsz_${mini_batch_size}
       #output_dir=${output_root_dir}/${domain}/rl_agent_${model_type}_threshold_reward_epoch${epoch}${suffix}_lora
-      output_dir=${root_dir}/${domain}/agent_difference_dataset
+      output_dir=${root_dir}/${domain}/agent_difference_dataset_w_noise_sample16
       # get the basename of output_dir into exp_name
       exp_name=$(basename "${output_dir}")
                 #--deepspeed ./ds_config_zero2.json \
                 #--mini_batch_size ${batch_size} \
                 #--use_lora \
-      if [[ ! -f ${output_dir}/test_difference.json ]]; then
+      if [[ ! -f ${output_dir}/test_noise_difference.json ]]; then
           if [[ -d ${agent_model_dir} ]]; then
               python create_dataset_for_best_k.py \
                 --do_train \
@@ -96,6 +96,7 @@ do
                 --save_steps 2000 \
                 --eval_steps 2000 \
                 --max_seq_length 2048 \
+                --use_noise_data True \
                 --per_device_train_batch_size 4 \
                 --learning_rate 2e-5 \
                 --num_train_epochs ${epoch} \
