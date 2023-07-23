@@ -38,12 +38,14 @@ model_root_dir="/net/scratch/chenghao/fm2/pragsum_dataset/AgentTraining_w_gold_e
 #agent_model_dir="${model_root_dir}/${domain}/dbt_agent_training_output_epoch${origin_epoch}${suffix}"
 agent_model_dir="${model_root_dir}/dbt_agent_training_output_epoch${origin_epoch}"
 rm_epoch=3
-reward_model_dir="${root_dir}/{}/agent_difference_dataset/validation_set_dbt_agent_training_output_epoch${rm_epoch}${suffix}"
+#reward_model_dir="${root_dir}/{}/agent_difference_dataset/validation_set_dbt_agent_training_output_epoch${rm_epoch}${suffix}"
+reward_model_dir="${root_dir}/${domain}/agent_difference_dataset/validation_set_dbt_agent_training_output_epoch${rm_epoch}${suffix}"
 
 echo ${reward_model_dir}
 # as we use validation file to do training, we have to test on the test set
     #--validation_file ${root_dir}/${domain}/dev.json \
 #    --negate_reward True \
+    #--reset_cache True \
 # rm is set to fit negative log-like, so we do not need to negate reward
 python compute_best_of_k_performance.py \
     --target_summary_dir ${target_summary_dir} \
@@ -51,7 +53,6 @@ python compute_best_of_k_performance.py \
     --reward_model ${reward_model_dir} \
     --train_file ${root_dir}/${domain}/train.json \
     --validation_file ${root_dir}/${domain}/test.json \
-    --reset_cache True \
     --output_dir ${target_summary_dir}/${domain} \
     --test_file ${root_dir}/${domain}/test.json
 

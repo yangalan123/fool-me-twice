@@ -20,7 +20,6 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from trl import AutoModelForSeq2SeqLMWithValueHead, AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer, set_seed
 from trl.core import LengthSampler
 
-
 import logging
 import os
 import random
@@ -85,6 +84,8 @@ def setup_slurm():
     # slurm not sending the signal, so sending it myself
     time_to_live = 14300  # just a bit less than 4 hrs
     schedule_death(time_to_live)
+
+
 def generate_sha256_hash(str_array):
     # Concatenate the strings
     combined_str = "\t\n".join(str_array)
@@ -93,6 +94,7 @@ def generate_sha256_hash(str_array):
     sha_signature = hashlib.sha256(combined_str.encode()).hexdigest()
 
     return sha_signature
+
 
 @dataclass
 class DataTrainingArguments:
@@ -130,6 +132,7 @@ class DataTrainingArguments:
                     validation_extension == train_extension
             ), f"`validation_file` should have the same extension (csv or json, now {validation_extension}!={train_extension}) as `train_file`."
 
+
 @dataclass
 class ScriptArguments:
     """
@@ -151,6 +154,7 @@ class ScriptArguments:
     negate_reward: Optional[bool] = field(default=False, metadata={"help": "negate the reward"})
     agent_model: Optional[str] = field(default="lvwerra/distilbert-imdb", metadata={"help": "the agent model name"})
     reset_cache: Optional[bool] = field(default=False, metadata={"help": "reset the cache"})
+
     def __post_init__(self):
         if self.reward_model is None:
             assert self.agent_model is not None, "agent_model must be specified if reward_model is not specified"
@@ -203,189 +207,235 @@ if __name__ == '__main__':
     setup_slurm()
     # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     domain_index = None
-    if "{}" in script_args.reward_model:
-        reward_model_dirs = glob.glob(script_args.reward_model.format("*"))
-        # get domain indexx by checking where is "{}" in the reward_model
-        domain_index = script_args.reward_model.split("/").index("{}")
-    else:
-        reward_model_dirs = [script_args.reward_model, ]
-        domain_index = -2
-    assert len(reward_model_dirs) >= 1, f"We need at least one reward model found for {script_args.reward_model}"
+    # if "{}" in script_args.reward_model:
+    #     reward_model_dirs = glob.glob(script_args.reward_model.format("*"))
+    #     # get domain index by checking where is "{}" in the reward_model
+    #     domain_index = script_args.reward_model.split("/").index("{}")
+    # else:
+    #     reward_model_dirs = [script_args.reward_model, ]
+    #     domain_index = -2
+    # assert len(reward_model_dirs) >= 1, f"We need at least one reward model found for {script_args.reward_model}"
     # loss = torch.nn.CrossEntropyLoss()
 
     assert "{}" not in script_args.agent_model, "We don't support multiple agent models"
     agent_model_dir = script_args.agent_model
 
-    for reward_model_dir in reward_model_dirs:
-        rm_domain_info = reward_model_dir.split("/")[domain_index]
-        logger.info(f"Using reward model {reward_model_dir}")
-        reward_pipe = pipeline(task="text-classification", model=reward_model_dir, device=0)
-        sentiment_pipe = pipeline(task="text-classification", model=agent_model_dir, device=0)
+    # for reward_model_dir in reward_model_dirs:
+    reward_model_dir = script_args.reward_model
+    domain_index = -3
+    rm_domain_info = reward_model_dir.split("/")[domain_index]
+    logger.info(f"Using reward model {reward_model_dir}")
+    reward_pipe = pipeline(task="text-classification", model=reward_model_dir, device=0)
+    sentiment_pipe = pipeline(task="text-classification", model=agent_model_dir, device=0)
 
-        sent_kwargs = {"return_all_scores": True, "function_to_apply": "softmax", "batch_size": 16}
-        # model = AutoModelForSequenceClassification.from_pretrained(script_args.reward_model).to(device)
-        # tokenizer = AutoTokenizer.from_pretrained(script_args.reward_model)
-        data_files = {"train": data_args.train_file, "dev": data_args.validation_file, "test": data_args.test_file}
-        raw_datasets = load_dataset(
-            "json",
-            data_files=data_files,
-        )
-        # validation_dataset = raw_datasets["validation"]
-        # train_dataset = raw_datasets["train"]
-        # trained on validation set, now evaluate on test set
-        for split, file_path in zip(['test'], [data_args.test_file]):
+    sent_kwargs = {"return_all_scores": True, "function_to_apply": "softmax", "batch_size": 16}
+    rm_kwargs = {"return_all_scores": True, "function_to_apply": "none", "batch_size": 16}
+    # model = AutoModelForSequenceClassification.from_pretrained(script_args.reward_model).to(device)
+    # tokenizer = AutoTokenizer.from_pretrained(script_args.reward_model)
+    data_files = {"train": data_args.train_file, "dev": data_args.validation_file, "test": data_args.test_file}
+    raw_datasets = load_dataset(
+        "json",
+        data_files=data_files,
+    )
+    # validation_dataset = raw_datasets["validation"]
+    # train_dataset = raw_datasets["train"]
+    # trained on validation set, now evaluate on test set
+    for split, file_path in zip(['test'], [data_args.test_file]):
         # for split, file_path in zip(['train', 'dev'], [data_args.train_file, data_args.validation_file]):
-            _raw_dataset = raw_datasets[split]
-            # fixed using train_sample_xxx in post_processing_summary.py
-            processed_summary_dump_path = os.path.join(os.path.dirname(data_args.test_file), f"{split}_with_summary_longt5.ds")
-            processed_summary_dump = datasets.Dataset.load_from_disk(processed_summary_dump_path)
-            # output_prediction_files = glob.glob(os.path.join(output_summary_dir, "generated_predictions_*"))
-            # create evaluation output dir in the parent dir of the file_path
-            output_eval_dir = os.path.join(os.path.dirname(file_path), f"evaluation_non_pragmatic_{rm_domain_info}{script_args.exp_name}")
-            os.makedirs(output_eval_dir, exist_ok=True)
-            summary_data = []
-            summary_pointer_left = 0
-            summary_pointer_right = 0
-            summary_pointers = []
-            for i in range(len(_raw_dataset)):
-                assert _raw_dataset[i]['text'] == processed_summary_dump["text"][i]
-                assert _raw_dataset[i]['label'] == processed_summary_dump["label"][i]
-                summary_pointer_right += len(processed_summary_dump["summary_longt5"][i])
-                item = {"summary": processed_summary_dump["summary_longt5"][i], "original": _raw_dataset[i]["text"], "label": _raw_dataset[i]["label"],
-                                     "performance": [], "sentence1": _raw_dataset[i]['sentence1'], "sentence2": _raw_dataset[i]['sentence2']}
-                summary_data.append(copy.deepcopy(item))
-                summary_pointers.append((summary_pointer_left, summary_pointer_right))
-                summary_pointer_left = summary_pointer_right
-            logger.info("Loaded {} examples from {}".format(len(summary_data), file_path))
-            all_summaries = []
-            all_claims = []
-            all_original_evidences = []
-            # num_of_summaries_per_example = 0
-            # after we have deduplicate the summaries in (post_processing_summary.py), we cannot use the number of summaries per example to
-            # determine the number of summaries per example
+        ds_domain_info = file_path.split("/")[-2]
+        output_summary_dir = os.path.join(script_args.target_summary_dir,
+                                          "train" + script_args.target_summary_suffix + "_domain_decomp",
+                                          ds_domain_info)
+        if not os.path.exists(output_summary_dir):
+            os.makedirs(output_summary_dir)
+        _raw_dataset = raw_datasets[split]
+        # fixed using train_sample_xxx in post_processing_summary.py
+        processed_summary_dump_path = os.path.join(os.path.dirname(data_args.test_file),
+                                                   f"{split}_with_summary_longt5.ds")
+        processed_summary_dump = datasets.Dataset.load_from_disk(processed_summary_dump_path)
+        # output_prediction_files = glob.glob(os.path.join(output_summary_dir, "generated_predictions_*"))
+        # create evaluation output dir in the parent dir of the file_path
+        output_eval_dir = os.path.join(os.path.dirname(file_path),
+                                       f"evaluation_non_pragmatic_{rm_domain_info}{script_args.exp_name}")
+        os.makedirs(output_eval_dir, exist_ok=True)
+        summary_data = []
+        summary_pointer_left = 0
+        summary_pointer_right = 0
+        summary_pointers = []
+        for i in range(len(_raw_dataset)):
+            assert _raw_dataset[i]['text'] == processed_summary_dump["text"][i]
+            assert _raw_dataset[i]['label'] == processed_summary_dump["label"][i]
+            summary_pointer_right += len(processed_summary_dump["summary_longt5"][i])
+            item = {"summary": processed_summary_dump["summary_longt5"][i], "original": _raw_dataset[i]["text"],
+                    "label": _raw_dataset[i]["label"],
+                    "performance": [], "sentence1": _raw_dataset[i]['sentence1'],
+                    "sentence2": _raw_dataset[i]['sentence2'],
+                    # for Popular Culture -> Popular_Culture
+                    "category": _raw_dataset[i]['category'].replace(" ", "_"), }
+            summary_data.append(copy.deepcopy(item))
+            summary_pointers.append((summary_pointer_left, summary_pointer_right))
+            summary_pointer_left = summary_pointer_right
+        logger.info("Loaded {} examples from {}".format(len(summary_data), file_path))
+        all_summaries = []
+        all_claims = []
+        all_original_evidences = []
+        # num_of_summaries_per_example = 0
+        # after we have deduplicate the summaries in (post_processing_summary.py), we cannot use the number of summaries per example to
+        # determine the number of summaries per example
 
-            # handled by post_processing_summary.py, deprecated
-            # for output_prediction_file in output_prediction_files:
-            #     with open(output_prediction_file, "r") as f:
-            #         buf = f.read()
-            #     summaries = buf.split("\n\n\n")
-            #     assert len(summaries) % len(_raw_dataset) == 0, \
-            #         f"bug: \nprocessing file: {output_prediction_file}\nnumber of summaries ({len(summaries)}) must be a multiple of number of examples ({len(_raw_dataset)})"
-            #     _num_of_summaries_per_example = len(summaries) // len(_raw_dataset)
-            #     if num_of_summaries_per_example == 0:
-            #         num_of_summaries_per_example = _num_of_summaries_per_example
-            #     else:
-            #         assert num_of_summaries_per_example == _num_of_summaries_per_example, \
-            #             f"bug: \nfile: {output_prediction_file}\nnumber of summaries per example ({num_of_summaries_per_example}) must be equal to number of summaries per example ({_num_of_summaries_per_example})"
-            for summary_i in range(len(_raw_dataset)):
-                # summary_data[summary_i]["summary"].extend(summaries[summary_i * num_of_summaries_per_example: (summary_i + 1) * num_of_summaries_per_example])
-                num_of_summaries_per_example = len(summary_data[summary_i]["summary"])
-                all_claims.extend([_raw_dataset[summary_i]["sentence1"], ] * num_of_summaries_per_example)
-                all_summaries.extend([_raw_dataset[summary_i]['sentence2'] + x for x in summary_data[summary_i]["summary"]])
-                all_original_evidences.extend([_raw_dataset[summary_i]['sentence2'], ] * num_of_summaries_per_example)
-            #     # all_summaries.extend(summaries)
-            # assert len(all_summaries) == len(_raw_dataset) * len(output_prediction_files) * num_of_summaries_per_example, \
-            #     f"bug: \nnumber of summaries ({len(all_summaries)}) must be equal to number of examples ({len(_raw_dataset)}) * number of summaries per example ({num_of_summaries_per_example})"
-            dataset = Dataset.from_dict({
-                "claim": all_claims,
-                "evidence": all_summaries,
-            })
-            all_original_text = [x['original'] for x in summary_data]
-            original_test_ds = Dataset.from_dict({
-                "claim": all_claims,
-                "evidence": all_original_evidences
-            })
-            cache_path = os.path.join(output_eval_dir, f"best_of_{script_args.target_summary_suffix}_cache_{split}_{rm_domain_info}_outputs.pt")
-            SHAkey = generate_sha256_hash(
-                ["Agent: " + agent_model_dir, " Reward: " + reward_model_dir, " Data: " + file_path])
+        for summary_i in range(len(_raw_dataset)):
+            # summary_data[summary_i]["summary"].extend(summaries[summary_i * num_of_summaries_per_example: (summary_i + 1) * num_of_summaries_per_example])
+            num_of_summaries_per_example = len(summary_data[summary_i]["summary"])
+            all_claims.extend([_raw_dataset[summary_i]["sentence1"], ] * num_of_summaries_per_example)
+            all_summaries.extend([_raw_dataset[summary_i]['sentence2'] + x for x in summary_data[summary_i]["summary"]])
+            all_original_evidences.extend([_raw_dataset[summary_i]['sentence2'], ] * num_of_summaries_per_example)
+        #     # all_summaries.extend(summaries)
+        # assert len(all_summaries) == len(_raw_dataset) * len(output_prediction_files) * num_of_summaries_per_example, \
+        #     f"bug: \nnumber of summaries ({len(all_summaries)}) must be equal to number of examples ({len(_raw_dataset)}) * number of summaries per example ({num_of_summaries_per_example})"
+        dataset = Dataset.from_dict({
+            "claim": all_claims,
+            "evidence": all_summaries,
+        })
+        # all_original_text = [x['original'] for x in summary_data]
+        original_test_ds = Dataset.from_dict({
+            "claim": all_claims,
+            "evidence": all_original_evidences
+        })
+        # cache_path = os.path.join(output_eval_dir, f"best_of_{script_args.target_summary_suffix}_cache_{split}_{rm_domain_info}_outputs.pt")
+        cache_path = os.path.join(output_eval_dir,
+                                  f"best_of_{script_args.target_summary_suffix}_cache_{split}_{rm_domain_info}_outputs_domain_wise_decomp.pt")
+        SHAkey = generate_sha256_hash(
+            ["Agent: " + agent_model_dir, " Reward: " + reward_model_dir, " Data: " + file_path])
+        try:
+            if script_args.reset_cache:
+                logger.info("Resetting cache")
+                raise Exception("Resetting cache")
+            logger.info("Trying to load cached sentiment outputs")
+            sent_outputs, sent_original_outputs, reward_outputs = torch.load(cache_path)[SHAkey]
+            logger.info("Loaded cached sentiment outputs")
+        except:
+            logger.info("Failed to load cached sentiment outputs, running sentiment analysis")
+            sent_outputs = list(sentiment_pipe(KeyPairDataset(dataset, "claim", "evidence"), **sent_kwargs))
+            reward_outputs = list(reward_pipe(KeyPairDataset(dataset, "claim", "evidence"), **rm_kwargs))
+            sent_original_outputs = list(
+                sentiment_pipe(KeyPairDataset(original_test_ds, "claim", "evidence"), **sent_kwargs))
+            if os.path.exists(cache_path):
+                cache_data = torch.load(cache_path)
+                if not script_args.reset_cache:
+                    assert SHAkey not in cache_data, "bug: SHAkey already exists in cache, and you do not want to reset cache"
+            else:
+                cache_data = {}
+            cache_data[SHAkey] = [sent_outputs, sent_original_outputs, reward_outputs]
             try:
-                if script_args.reset_cache:
-                    logger.info("Resetting cache")
-                    raise Exception("Resetting cache")
-                logger.info("Trying to load cached sentiment outputs")
-                sent_outputs, sent_original_outputs, reward_outputs = torch.load(cache_path)[SHAkey]
-                logger.info("Loaded cached sentiment outputs")
-            except:
-                logger.info("Failed to load cached sentiment outputs, running sentiment analysis")
-                sent_outputs = list(sentiment_pipe(KeyPairDataset(dataset, "claim", "evidence"), **sent_kwargs))
-                reward_outputs = list(reward_pipe(KeyPairDataset(dataset, "claim", "evidence"), **sent_kwargs))
-                sent_original_outputs = list(sentiment_pipe(KeyPairDataset(original_test_ds, "claim", "evidence"), **sent_kwargs))
-                if os.path.exists(cache_path):
-                    cache_data = torch.load(cache_path)
-                    if not script_args.reset_cache:
-                        assert SHAkey not in cache_data, "bug: SHAkey already exists in cache, and you do not want to reset cache"
-                else:
-                    cache_data = {}
-                cache_data[SHAkey] = [sent_outputs, sent_original_outputs, reward_outputs]
-                try:
-                    # torch.save([sent_outputs, sent_original_outputs, reward_outputs], cache_path)
-                    torch.save(cache_data, cache_path)
-                    logger.info("Saved sentiment outputs")
-                except Exception as e:
-                    print(e)
-                    traceback.print_exc()
-                    print(sent_outputs[:10])
-                    print(sent_original_outputs[:10])
-                # for summary_i in range(len(summaries)):
-                #     original_index = summary_i // len(_raw_dataset)
-                #     summary_data[original_index]["summary"].append(summaries[summary_i])
-            normal_scores = []
-            summary_mean_scores = []
-            summary_max_scores = []
-            summary_min_scores = []
-            fitness_mean_scores = []
-            fitness_max_scores = []
-            fitness_min_scores = []
-            labels = []
-            if "agent_as_rm" not in script_args.exp_name:
-                # in this case, reward model must output a scalar
-                assert len(reward_outputs[0]) == 1, "bug: reward model must output a scalar, now output: {}".format(reward_outputs[0])
-            for i in trange(len(summary_data), desc="evaluating"):
-                # summary_data[i]['original_score'] = sent_original_outputs[i][0]['score']
-                gt_label = summary_data[i]['label'].lower()
-                # summary_data[i]['original_score'] = [process_func(x['score']) for x in sent_original_outputs[i] if x['label'].lower() == gt_label][0]
-                summary_data[i]['original_score'] = get_score_from_output(sent_original_outputs[i], gt_label)
-                # output = sentiment_pipe(summary_data[i]["summary"], **sent_kwargs)
-                # output = sent_outputs[i * num_of_summaries_per_example: (i + 1) * num_of_summaries_per_example]
-                output = sent_outputs[summary_pointers[i][0]: summary_pointers[i][1]]
-                # reward_output = reward_outputs[i * num_of_summaries_per_example: (i + 1) * num_of_summaries_per_example]
-                reward_output = reward_outputs[summary_pointers[i][0]: summary_pointers[i][1]]
-                # print(output)
-                # summary_data[i]["performance"] = [x[0]['score'] for x in output]
-                summary_data[i]["performance"] = [get_score_from_output(x, gt_label) for x in output]
-                # summary_data[i]["reward"] = [x[0]['score'] for x in reward_output]
-                summary_data[i]["reward"] = [x[0]['score'] if len(x) == 1 else max([y['score'] for y in x]) for x in reward_output]
-                if script_args.negate_reward:
-                    summary_data[i]['reward'] = [-x for x in summary_data[i]['reward']]
-                summary_data[i]['performance'] = np.array(summary_data[i]['performance'])
-                # summary_data[i]['performance'] = np.abs(summary_data[i]['performance'] - summary_data[i]['label'])
-                summary_data[i]['fitness'] = np.abs(summary_data[i]['performance'] - summary_data[i]['original_score'])
-                # note that as FM2 is a binary classification task, we can no longer use the following code to compute MSE
-                # summary_data[i]['performance'] = np.abs(summary_data[i]['performance'] - summary_data[i]['label'])
-                # normal_scores.append(abs(summary_data[i]['original_score'] - summary_data[i]['label']))
-                normal_scores.append(summary_data[i]['original_score'])
-                # normal_scores.append(abs(summary_data[i]['original_score'] - summary_data[i]['label']))
-                summary_mean_scores.append(np.mean(summary_data[i]["performance"]))
-                # summary_max_scores.append(np.max(summary_data[i]["performance"]))
-                summary_max_scores.append(summary_data[i]["performance"][np.argmax(summary_data[i]["reward"])])
-                # summary_min_scores.append(np.min(summary_data[i]["performance"]))
-                summary_min_scores.append(summary_data[i]["performance"][np.argmin(summary_data[i]["reward"])])
-                fitness_mean_scores.append(np.mean(summary_data[i]["fitness"]))
-                # fitness_max_scores.append(np.max(summary_data[i]["fitness"]))
-                fitness_max_scores.append(summary_data[i]["fitness"][np.argmax(summary_data[i]["reward"])])
-                # fitness_min_scores.append(np.min(summary_data[i]["fitness"]))
-                fitness_min_scores.append(summary_data[i]["fitness"][np.argmin(summary_data[i]["reward"])])
-                labels.append(summary_data[i]["label"])
-            normal_scores = np.array(normal_scores)
-            summary_mean_scores = np.array(summary_mean_scores)
-            summary_max_scores = np.array(summary_max_scores)
-            summary_min_scores = np.array(summary_min_scores)
-            labels = np.array(labels)
+                # torch.save([sent_outputs, sent_original_outputs, reward_outputs], cache_path)
+                torch.save(cache_data, cache_path)
+                logger.info("Saved sentiment outputs")
+            except Exception as e:
+                print(e)
+                traceback.print_exc()
+                print(sent_outputs[:10])
+                print(sent_original_outputs[:10])
+            # for summary_i in range(len(summaries)):
+            #     original_index = summary_i // len(_raw_dataset)
+            #     summary_data[original_index]["summary"].append(summaries[summary_i])
+
+        normal_scores = dict()
+        summary_mean_scores = dict()
+        summary_max_scores = dict()
+        summary_min_scores = dict()
+        fitness_mean_scores = dict()
+        fitness_max_scores = dict()
+        fitness_min_scores = dict()
+        ground_truth_max_scores = dict()
+        ground_truth_min_scores = dict()
+        labels = dict()
+        if "agent_as_rm" not in script_args.exp_name:
+            # in this case, reward model must output a scalar
+            assert len(reward_outputs[0]) == 1, "bug: reward model must output a scalar, now output: {}".format(
+                reward_outputs[0])
+        for i in trange(len(summary_data), desc="evaluating"):
+            # summary_data[i]['original_score'] = sent_original_outputs[i][0]['score']
+            gt_label = summary_data[i]['label'].lower()
+            category = summary_data[i]['category']
+            # summary_data[i]['original_score'] = [process_func(x['score']) for x in sent_original_outputs[i] if x['label'].lower() == gt_label][0]
+            summary_data[i]['original_score'] = get_score_from_output(sent_original_outputs[i], gt_label)
+            # output = sentiment_pipe(summary_data[i]["summary"], **sent_kwargs)
+            # output = sent_outputs[i * num_of_summaries_per_example: (i + 1) * num_of_summaries_per_example]
+            output = sent_outputs[summary_pointers[i][0]: summary_pointers[i][1]]
+            # reward_output = reward_outputs[i * num_of_summaries_per_example: (i + 1) * num_of_summaries_per_example]
+            reward_output = reward_outputs[summary_pointers[i][0]: summary_pointers[i][1]]
+            # print(output)
+            # summary_data[i]["performance"] = [x[0]['score'] for x in output]
+            summary_data[i]["performance"] = [get_score_from_output(x, gt_label) for x in output]
+            # summary_data[i]["reward"] = [x[0]['score'] for x in reward_output]
+            summary_data[i]["reward"] = [x[0]['score'] if len(x) == 1 else max([y['score'] for y in x]) for x in
+                                         reward_output]
+            if script_args.negate_reward:
+                summary_data[i]['reward'] = [-x for x in summary_data[i]['reward']]
+            summary_data[i]['performance'] = np.array(summary_data[i]['performance'])
+            # summary_data[i]['performance'] = np.abs(summary_data[i]['performance'] - summary_data[i]['label'])
+            summary_data[i]['fitness'] = np.abs(summary_data[i]['performance'] - summary_data[i]['original_score'])
+            # note that as FM2 is a binary classification task, we can no longer use the following code to compute MSE
+            # summary_data[i]['performance'] = np.abs(summary_data[i]['performance'] - summary_data[i]['label'])
+            # normal_scores.append(abs(summary_data[i]['original_score'] - summary_data[i]['label']))
+            # normal_scores.append(summary_data[i]['original_score'])
+            if category not in normal_scores:
+                normal_scores[category] = []
+                summary_mean_scores[category] = []
+                summary_max_scores[category] = []
+                summary_min_scores[category] = []
+                fitness_mean_scores[category] = []
+                fitness_max_scores[category] = []
+                fitness_min_scores[category] = []
+                labels[category] = []
+                ground_truth_max_scores[category] = []
+                ground_truth_min_scores[category] = []
+            normal_scores[category].append(summary_data[i]['original_score'])
+            # normal_scores.append(abs(summary_data[i]['original_score'] - summary_data[i]['label']))
+            # summary_mean_scores.append(np.mean(summary_data[i]["performance"]))
+            summary_mean_scores[category].append(np.mean(summary_data[i]["performance"]))
+            # summary_max_scores.append(np.max(summary_data[i]["performance"]))
+            # summary_max_scores.append(summary_data[i]["performance"][np.argmax(summary_data[i]["reward"])])
+            summary_max_scores[category].append(summary_data[i]["performance"][np.argmax(summary_data[i]["reward"])])
+            # summary_min_scores.append(np.min(summary_data[i]["performance"]))
+            # summary_min_scores.append(summary_data[i]["performance"][np.argmin(summary_data[i]["reward"])])
+            summary_min_scores[category].append(summary_data[i]["performance"][np.argmin(summary_data[i]["reward"])])
+            ground_truth_max_scores[category].append(np.max(summary_data[i]['performance']))
+            ground_truth_min_scores[category].append(np.min(summary_data[i]['performance']))
+            # fitness_mean_scores.append(np.mean(summary_data[i]["fitness"]))
+            fitness_mean_scores[category].append(np.mean(summary_data[i]["fitness"]))
+            # fitness_max_scores.append(np.max(summary_data[i]["fitness"]))
+            # fitness_max_scores.append(summary_data[i]["fitness"][np.argmax(summary_data[i]["reward"])])
+            fitness_max_scores[category].append(summary_data[i]["fitness"][np.argmax(summary_data[i]["reward"])])
+            # fitness_min_scores.append(np.min(summary_data[i]["fitness"]))
+            # fitness_min_scores.append(summary_data[i]["fitness"][np.argmin(summary_data[i]["reward"])])
+            fitness_min_scores[category].append(summary_data[i]["fitness"][np.argmin(summary_data[i]["reward"])])
+            # labels.append(summary_data[i]["label"])
+            labels[category].append(summary_data[i]["label"])
+        # normal_scores = np.array(normal_scores)
+        # summary_mean_scores = np.array(summary_mean_scores)
+        # summary_max_scores = np.array(summary_max_scores)
+        # summary_min_scores = np.array(summary_min_scores)
+        # labels = np.array(labels)
+        for category in normal_scores:
+            normal_scores[category] = np.array(normal_scores[category])
+            summary_mean_scores[category] = np.array(summary_mean_scores[category])
+            summary_max_scores[category] = np.array(summary_max_scores[category])
+            summary_min_scores[category] = np.array(summary_min_scores[category])
+            fitness_mean_scores[category] = np.array(fitness_mean_scores[category])
+            fitness_max_scores[category] = np.array(fitness_max_scores[category])
+            fitness_min_scores[category] = np.array(fitness_min_scores[category])
+            labels[category] = np.array(labels[category])
+            ground_truth_max_scores[category] = np.array(ground_truth_max_scores[category])
+            ground_truth_min_scores[category] = np.array(ground_truth_min_scores[category])
             all_mses = {}
             for output_filename, output_scores_array in zip(
                     [f"eval_{split}_normal.pkl", f"eval_{split}_summary_mean.pkl", f"eval_{split}_summary_max.pkl",
-                     f"eval_{split}_summary_min.pkl", f"eval_{split}_fitness_mean.pkl", f"eval_{split}_fitness_max.pkl", f"eval_{split}_fitness_min.pkl"],
-                    [normal_scores, summary_mean_scores, summary_max_scores, summary_min_scores, fitness_mean_scores, fitness_max_scores, fitness_min_scores]):
+                     f"eval_{split}_summary_min.pkl", f"eval_{split}_fitness_mean.pkl", f"eval_{split}_fitness_max.pkl",
+                     f"eval_{split}_fitness_min.pkl", f"eval_{split}_ground_truth_max.pkl",
+                        f"eval_{split}_ground_truth_min.pkl"],
+                    [normal_scores[category], summary_mean_scores[category], summary_max_scores[category], summary_min_scores[category], fitness_mean_scores[category],
+                     fitness_max_scores[category], fitness_min_scores[category], ground_truth_max_scores[category], ground_truth_min_scores[category]]):
                 with open(os.path.join(output_eval_dir, output_filename), "wb") as f:
                     pickle.dump([output_scores_array, labels], f)
                 json_filename = output_filename.replace(".pkl", ".json")
@@ -405,10 +455,8 @@ if __name__ == '__main__':
                     json.dump(res, f, indent=4)
             all_mses['num_summaries'] = len(summary_data[0]["summary"])
             # if "agent_as_rm" in script_args.exp_name:
-            ds_domain_info = file_path.split("/")[-2]
-            output_summary_dir = os.path.join(script_args.target_summary_dir, "train" + script_args.target_summary_suffix, ds_domain_info)
-            if not os.path.exists(output_summary_dir):
-                os.makedirs(output_summary_dir)
-            pickle.dump(all_mses, open(os.path.join(output_summary_dir, f"all_mses_{split}_{rm_domain_info}{script_args.exp_name}.pkl"), "wb"))
+            pickle.dump(all_mses, open(
+                os.path.join(output_summary_dir, f"all_mses_{split}_{category}{script_args.exp_name}.pkl"), "wb"))
             print(all_mses)
 
+        torch.save(summary_data, os.path.join(output_summary_dir, f"summary_data_{split}{script_args.exp_name}.pt"))
