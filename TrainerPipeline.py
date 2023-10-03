@@ -15,20 +15,20 @@ class TrainerPipeline:
         return result
     def __call__(self, dataset, is_regression=True, label_list=None, **kwargs):
         prediction_results = self.trainer.predict(dataset, metric_key_prefix="predict")
+        ret = []
         if is_regression:
             predictions = np.squeeze(prediction_results.predictions)
             # return [
             #     {"label": "LABEL_0", "score": x} for x in predictions
             # ]
-            ret = []
             for item in predictions:
                 ret.append(
                     [{"label": "LABEL_0", "score": item}, ]
                 )
         else:
             assert label_list is not None, "label_list must be provided for classification task"
-            ret = []
             for item in prediction_results.predictions:
                 ret.append(
                     [{"label": label_list[i], "score": x} for i, x in enumerate(item)]
                 )
+        return ret

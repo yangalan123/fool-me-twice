@@ -11,7 +11,7 @@ import torch
 import numpy as np
 import csv
 
-def error_analysis(domain_values, args, output_dir="error_analysis"):
+def error_analysis(domain_values, args, output_dir="error_analysis_llama2_7b"):
     for domain_value1 in domain_values:
         error_dir = os.path.join(output_dir, domain_value1)
         os.makedirs(error_dir, exist_ok=True)
@@ -215,7 +215,8 @@ if __name__ == '__main__':
             plt.xlabel("Model Evaluated on")
             plt.ylabel("Model Trained on")
             exp_name = args.exp_name + "_" + args.subdir
-            visualization_dir = os.path.join("visualization_after_debug_0719", exp_name + f"_{args.all_mses_suffix}" + "_{}".format(key))
+            # visualization_dir = os.path.join("visualization_after_debug_0719", exp_name + f"_{args.all_mses_suffix}" + "_{}".format(key))
+            visualization_dir = os.path.join("visualization_llama2_7b_peft_1003", exp_name + f"_{args.all_mses_suffix}" + "_{}".format(key))
             os.makedirs(visualization_dir, exist_ok=True)
             plt.savefig(os.path.join(visualization_dir, f"bxent_heatmap_{args.criterion}.png"))
             plt.show()

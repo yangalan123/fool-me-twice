@@ -160,7 +160,7 @@ class ScriptArguments:
         metadata={"help": "The suffix of the target summary directory (e.g., _sample_16)."},
     )
     exp_name: Optional[str] = field(
-        default="_rm_trained_for_difference",
+        default="_llama2-7b-peft-768_rm_trained_for_difference",
         metadata={"help": "The name of the experiment, used to name the output directory."},
     )
     base_model_dir: Optional[str] = field(
@@ -421,10 +421,11 @@ if __name__ == '__main__':
                                              func_get_score_from_output, summary_pointers, split, _raw_dataset,
                                              file_path,
                                              output_eval_dir, processed_summary_dump_path)
-            # compute_and_save_metrics(reward_outputs, sent_outputs, sent_original_outputs, script_args, summary_data,
-            #                          func_get_score_from_output, summary_pointers, split, _raw_dataset, file_path,
-            #                          output_eval_dir, processed_summary_dump_path)
-                logger.warning("Finished computing and saving metrics successfully")
+            else:
+                compute_and_save_metrics(reward_outputs, sent_outputs, sent_original_outputs, script_args, summary_data,
+                                         func_get_score_from_output, summary_pointers, split, _raw_dataset, file_path,
+                                         output_eval_dir, processed_summary_dump_path)
+                logger.warning("Finished computing and saving metrics successfully at {}".format(output_eval_dir))
         except ValueError as e:
             logger.warning("Computing and Save Metrics Failed")
             print(e)
