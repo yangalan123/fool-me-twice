@@ -5,7 +5,7 @@
 #SBATCH --error=/net/scratch/chenghao/fm2/slurm_output/%A_%a.%N.stderr
 #SBATCH --chdir=/net/scratch/chenghao/fm2/slurm_output
 #SBATCH --partition=general
-#SBATCH --gres=gpu:a40:4
+#SBATCH --gres=gpu:a100:1
 #SBATCH --job-name=run_decsum_best_of_k
 #SBATCH --nodes=1
 #SBATCH --mem=300gb
@@ -24,7 +24,7 @@ target_summary_root_dir="/net/scratch/chenghao/fm2/general_summary_longt5/Genera
 #root_dir="/net/scratch/chenghao/yelp/processed_data_all_business_filter_values_category/latest--1reviews-ranking--1/pragsum_filter_chain_filter_values_category_final_review_level_mutual_exclusive/custom"
 root_dir="/net/scratch/chenghao/fm2/pragsum_dataset/AgentTraining_domain_wise"
 readarray -t domains < <(find "${root_dir}" -maxdepth 1 -type d ! -path "${root_dir}" -exec basename {} \;)
-SLURM_ARRAY_TASK_ID=0
+#SLURM_ARRAY_TASK_ID=1
 domain=${domains[${SLURM_ARRAY_TASK_ID}]}
 target_summary_dir=${target_summary_root_dir}
 output_root_dir=${root_dir}
@@ -38,11 +38,8 @@ model_root_dir="/net/scratch/chenghao/fm2/pragsum_dataset/AgentTraining_w_gold_e
 #agent_model_dir="${model_root_dir}/${domain}/dbt_agent_training_output_epoch${origin_epoch}${suffix}"
 agent_model_dir="${model_root_dir}/dbt_agent_training_output_epoch${origin_epoch}"
 rm_epoch=3
-#reward_model_dir="${root_dir}/{}/agent_difference_dataset/validation_set_dbt_agent_training_output_epoch${rm_epoch}${suffix}"
-# for dbt
-#reward_model_dir="${root_dir}/${domain}/agent_difference_dataset/validation_set_dbt_agent_training_output_epoch${rm_epoch}${suffix}"
-# for llama2
-reward_model_dir="${root_dir}/${domain}/agent_difference_dataset/validation_set_llama2_lora_agent_training_output_epoch${rm_epoch}${suffix}"
+# for deberta
+reward_model_dir="${root_dir}/{}/agent_difference_dataset/validation_set_dbt_agent_training_output_epoch${rm_epoch}${suffix}"
 
 echo ${reward_model_dir}
 # as we use validation file to do training, we have to test on the test set
@@ -54,20 +51,9 @@ python compute_best_of_k_performance.py \
     --target_summary_dir ${target_summary_dir} \
     --agent_model ${agent_model_dir} \
     --reward_model ${reward_model_dir} \
-    --reset_cache True \
     --train_file ${root_dir}/${domain}/train.json \
     --validation_file ${root_dir}/${domain}/test.json \
     --output_dir ${target_summary_dir}/${domain} \
     --test_file ${root_dir}/${domain}/test.json
 
-python compute_best_of_k_performance.py \
-    --target_summary_dir ${target_summary_dir} \
-    --agent_model ${agent_model_dir} \
-    --reward_model ${reward_model_dir} \
-    --reset_cache True \
-    --train_file ${root_dir}/${domain}/train.json \
-    --validation_file ${root_dir}/${domain}/test.json \
-    --output_dir ${target_summary_dir}/${domain} \
-    --criterion "acc" \
-    --test_file ${root_dir}/${domain}/test.json
 

@@ -16,7 +16,13 @@ python compile_results_cross_agent_best_of_k.py \
     --target_summary_root_dir ${target_summary_root_dir} \
     --subdir train_sample_16_domain_decomp \
     --all_mses_suffix "_rm_trained_for_difference"
+
 python compile_results_cross_agent_best_of_k.py \
     --target_summary_root_dir ${target_summary_root_dir} \
     --subdir train_sample_16_domain_decomp \
-    --all_mses_suffix "_rm_trained_for_difference_w_noise"
+    --criterion "acc" \
+    --all_mses_suffix "_rm_trained_for_difference"
+#python compile_results_cross_agent_best_of_k.py \
+    #--target_summary_root_dir ${target_summary_root_dir} \
+    #--subdir train_sample_16_domain_decomp \
+    #--all_mses_suffix "_rm_trained_for_difference_w_noise"

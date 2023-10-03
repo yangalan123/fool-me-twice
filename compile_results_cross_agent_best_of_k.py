@@ -19,7 +19,7 @@ def error_analysis(domain_values, args, output_dir="error_analysis"):
         # for domain_value2 in domain_values:
             # [Attention]: Here for FM2, as we change the logic for loading summary in compute_best_of_k_performance.py as well as the storage logic, so we need to change the order of subdir and domain_value2
         eval_target = os.path.join(args.target_summary_root_dir, args.subdir, domain_value1,
-                                   f"summary_data_{split}{args.all_mses_suffix}.pt")
+                                   f"summary_data_{split}{args.all_mses_suffix}_{args.criterion}.pt")
         buf = []
         all_num_summaries = []
         all_delta_gt_scores = []
@@ -38,6 +38,8 @@ def error_analysis(domain_values, args, output_dir="error_analysis"):
                 claim = item['sentence1']
                 evidence = item['sentence2']
                 num_summaries = len(item['summary'])
+                prediction_id = np.argmax([x['score'] for x in item['output_distribution']])
+                prediction_label = item['output_distribution'][prediction_id]['label']
                 if best_score > original_score and abs(gt_score - original_score) > 0.01:
                     buf.append({
                         'original_score': original_score,
@@ -49,7 +51,8 @@ def error_analysis(domain_values, args, output_dir="error_analysis"):
                         'label': label,
                         'claim': claim,
                         'evidence': evidence,
-                        'num_summaries': num_summaries
+                        'num_summaries': num_summaries,
+                        'prediction': prediction_label
                     })
                 all_num_summaries.append(num_summaries)
                 all_delta_gt_scores.append(gt_score - original_score)
@@ -57,7 +60,7 @@ def error_analysis(domain_values, args, output_dir="error_analysis"):
         # output buf to csv files for further analysis
         # df = pd.DataFrame(buf)
         # df.to_csv(os.path.join(error_dir, f"error_analysis_{split}.csv"), index=False)
-        file_name = os.path.join(error_dir, f"error_analysis_{split}.csv")
+        file_name = os.path.join(error_dir, f"error_analysis_{split}_{args.criterion}.csv")
 
 
         # Open the file in write mode
@@ -86,7 +89,7 @@ def error_analysis(domain_values, args, output_dir="error_analysis"):
             plt.title(f"{name} histogram")
             plt.xlabel(name)
             plt.ylabel("count")
-            plt.savefig(os.path.join(error_dir, f"{name}_{split}.png"))
+            plt.savefig(os.path.join(error_dir, f"{name}_{split}_{args.criterion}.png"))
             # clear plt
             plt.clf()
             plt.close()
@@ -128,6 +131,7 @@ if __name__ == '__main__':
     parser.add_argument("--subdir", default='dev_sample_16', type=str)
     parser.add_argument("--exp_name", default='best-of-16-validation-trained-rm-test-test', type=str)
     parser.add_argument("--all_mses_suffix", default='', type=str)
+    parser.add_argument("--criterion", default='mse', type=str)
     args = parser.parse_args()
     domain_dirs = glob.glob(f"/net/scratch/chenghao/fm2/pragsum_dataset/AgentTraining_domain_wise/*")
     domain_values = [os.path.basename(domain_dir) for domain_dir in domain_dirs]
@@ -154,7 +158,7 @@ if __name__ == '__main__':
             for domain_value2 in domain_values:
                 # [Attention]: Here for FM2, as we change the logic for loading summary in compute_best_of_k_performance.py as well as the storage logic, so we need to change the order of subdir and domain_value2
                 eval_target = os.path.join(args.target_summary_root_dir, args.subdir, domain_value1,
-                                           f"all_mses_{split}_{domain_value2}{args.all_mses_suffix}.pkl")
+                                           f"all_{args.criterion}s_{split}_{domain_value2}{args.all_mses_suffix}.pkl")
                 if os.path.exists(eval_target):
                     data = pickle.load(open(eval_target, "rb"))
                     # performance = 100 * data['avg']
@@ -213,7 +217,7 @@ if __name__ == '__main__':
             exp_name = args.exp_name + "_" + args.subdir
             visualization_dir = os.path.join("visualization_after_debug_0719", exp_name + f"_{args.all_mses_suffix}" + "_{}".format(key))
             os.makedirs(visualization_dir, exist_ok=True)
-            plt.savefig(os.path.join(visualization_dir, "bxent_heatmap.png"))
+            plt.savefig(os.path.join(visualization_dir, f"bxent_heatmap_{args.criterion}.png"))
             plt.show()
             # clear figure
             plt.clf()

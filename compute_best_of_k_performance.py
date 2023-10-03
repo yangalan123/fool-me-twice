@@ -15,7 +15,8 @@ import json
 from tqdm import trange
 from transformers.pipelines.pt_utils import KeyDataset, KeyPairDataset
 from transformers.trainer_utils import get_last_checkpoint
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, AutoConfig
+from peft import PeftModel, PeftConfig
 
 from trl import AutoModelForSeq2SeqLMWithValueHead, AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer, set_seed
 from trl.core import LengthSampler
@@ -42,17 +43,17 @@ def is_on_slurm():
 
 
 def schedule_death(seconds, verbose=False):
-    logger.info(f"scheduling death after {seconds}s")
+    logger.warning(f"scheduling death after {seconds}s")
 
     def f():
         death = time.time() + seconds
         while time.time() < death:
             if verbose:
-                logger.info(f"Beep...")
+                logger.warning(f"Beep...")
             sleep_interval = max(0, min(600, death - time.time()))
             time.sleep(sleep_interval)
 
-        logger.info(f"time to die...")
+        logger.warning(f"time to die...")
         logging.shutdown()
         os.kill(os.getpid(), signal.SIGUSR1)
 
@@ -60,26 +61,26 @@ def schedule_death(seconds, verbose=False):
 
 
 def slurm_sigusr1_handler_fn(signum, frame) -> None:
-    logger.info(f"received signal {signum}")
+    logger.warning(f"received signal {signum}")
     job_id = os.environ["SLURM_JOB_ID"]
     cmd = ["scontrol", "requeue", job_id]
-    logger.info(f"requeing job {job_id}...")
+    logger.warning(f"requeing job {job_id}...")
     try:
         result = call(cmd)
     except FileNotFoundError:
         joint_cmd = [str(x) for x in cmd]
         result = call(" ".join(joint_cmd), shell=True)
     if result == 0:
-        logger.info(f"requeued exp {job_id}")
+        logger.warning(f"requeued exp {job_id}")
     else:
-        logger.info("requeue failed")
+        logger.warning("requeue failed")
 
 
 def setup_slurm():
     if not is_on_slurm():
-        logger.info("not running in slurm, this job will run until it finishes.")
+        logger.warning("not running in slurm, this job will run until it finishes.")
         return
-    logger.info("running in slurm, ready to requeue on SIGUSR1.")
+    logger.warning("running in slurm, ready to requeue on SIGUSR1.")
     signal.signal(signal.SIGUSR1, slurm_sigusr1_handler_fn)
     # slurm not sending the signal, so sending it myself
     time_to_live = 14300  # just a bit less than 4 hrs
@@ -150,15 +151,21 @@ class ScriptArguments:
         default="_rm_trained_for_difference",
         metadata={"help": "The name of the experiment, used to name the output directory."},
     )
+    base_model_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "[LORA only] The name of the base model, used to name the output directory."},
+    )
     reward_model: Optional[str] = field(default=None, metadata={"help": "the reward model name"})
     negate_reward: Optional[bool] = field(default=False, metadata={"help": "negate the reward"})
     agent_model: Optional[str] = field(default="lvwerra/distilbert-imdb", metadata={"help": "the agent model name"})
     reset_cache: Optional[bool] = field(default=False, metadata={"help": "reset the cache"})
+    criterion: Optional[str] = field(default="mse", metadata={"help": "the criterion to use"})
 
     def __post_init__(self):
         if self.reward_model is None:
             assert self.agent_model is not None, "agent_model must be specified if reward_model is not specified"
             self.reward_model = self.agent_model
+        assert self.criterion in ["mse", "acc"], "criterion must be either mse or acc"
     # def __post_init__(self):
     #     assert self.batch_size >= self.mini_batch_size, "batch_size must be >= mini_batch_size"
     #     if self.use_lora:
@@ -186,9 +193,9 @@ if __name__ == '__main__':
         f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
         + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
     )
-    logger.info(f"Training/evaluation parameters {training_args}")
-    logger.info(f"Script parameters {script_args}")
-    logger.info(f"Data parameters {data_args}")
+    logger.warning(f"Training/evaluation parameters {training_args}")
+    logger.warning(f"Script parameters {script_args}")
+    logger.warning(f"Data parameters {data_args}")
 
     # last_checkpoint = None
     # if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
@@ -199,7 +206,7 @@ if __name__ == '__main__':
     #             "Use --overwrite_output_dir to overcome."
     #         )
     #     elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
-    #         logger.info(
+    #         logger.warning(
     #             f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
     #             "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
     #         )
@@ -224,12 +231,41 @@ if __name__ == '__main__':
     reward_model_dir = script_args.reward_model
     domain_index = -3
     rm_domain_info = reward_model_dir.split("/")[domain_index]
-    logger.info(f"Using reward model {reward_model_dir}")
-    reward_pipe = pipeline(task="text-classification", model=reward_model_dir, device=0)
-    sentiment_pipe = pipeline(task="text-classification", model=agent_model_dir, device=0)
+    logger.warning(f"Using reward model {reward_model_dir}")
+    if "lora" not in reward_model_dir:
+        reward_pipe = pipeline(task="text-classification", model=reward_model_dir, device=0)
+    else:
+        try:
+            logger.warning("Trying to load base model from peft config")
+            lora_config = PeftConfig.from_pretrained(reward_model_dir)
+            config = AutoConfig.from_pretrained(lora_config.base_model_name_or_path, num_labels=1)
+            reward_base_model = AutoModelForSequenceClassification.from_pretrained(lora_config.base_model_name_or_path,
+                                                                                   config=config,
+                                                                                   )
+            # tokenizer = AutoTokenizer.from_pretrained(lora_config.base_model_name_or_path)
+        except:
+            config = AutoConfig.from_pretrained(script_args.base_model_dir, num_labels=1)
+            logger.warning("Failed to load base model from peft config, trying to load base model from base model dir")
+            reward_base_model = AutoModelForSequenceClassification.from_pretrained(script_args.base_model_dir,
+                                                                                   # device_map="auto",
+                                                                                   config=config,
+                                                                                   # torch_dtype=torch.float16,
+                                                                                   )
+        reward_model = PeftModel.from_pretrained(reward_base_model, reward_model_dir, device_map="auto")
+        try:
+            logger.warning("Trying to load tokenizer from reward model dir")
+            tokenizer = AutoTokenizer.from_pretrained(reward_model_dir)
+        except:
+            logger.warning("Failed to load tokenizer from reward model dir, trying to load tokenizer from base model dir")
+            tokenizer = AutoTokenizer.from_pretrained(script_args.base_model_dir)
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+        reward_pipe = pipeline(task="text-classification", model=reward_model, tokenizer=tokenizer)
+    sentiment_pipe = pipeline(task="text-classification", model=agent_model_dir, device=1)
 
     sent_kwargs = {"return_all_scores": True, "function_to_apply": "softmax", "batch_size": 16}
-    rm_kwargs = {"return_all_scores": True, "function_to_apply": "none", "batch_size": 16}
+    rm_kwargs = {"return_all_scores": True, "function_to_apply": "none", "batch_size": 32}
+    # if "llama" in reward_model_dir:
+    #     rm_kwargs['batch_size'] = 1
     # model = AutoModelForSequenceClassification.from_pretrained(script_args.reward_model).to(device)
     # tokenizer = AutoTokenizer.from_pretrained(script_args.reward_model)
     data_files = {"train": data_args.train_file, "dev": data_args.validation_file, "test": data_args.test_file}
@@ -240,6 +276,7 @@ if __name__ == '__main__':
     # validation_dataset = raw_datasets["validation"]
     # train_dataset = raw_datasets["train"]
     # trained on validation set, now evaluate on test set
+    func_get_score_from_output = lambda predict, label: get_score_from_output(predict, label, compute_acc=script_args.criterion == "acc")
     for split, file_path in zip(['test'], [data_args.test_file]):
         # for split, file_path in zip(['train', 'dev'], [data_args.train_file, data_args.validation_file]):
         ds_domain_info = file_path.split("/")[-2]
@@ -275,7 +312,7 @@ if __name__ == '__main__':
             summary_data.append(copy.deepcopy(item))
             summary_pointers.append((summary_pointer_left, summary_pointer_right))
             summary_pointer_left = summary_pointer_right
-        logger.info("Loaded {} examples from {}".format(len(summary_data), file_path))
+        logger.warning("Loaded {} examples from {}".format(len(summary_data), file_path))
         all_summaries = []
         all_claims = []
         all_original_evidences = []
@@ -308,15 +345,31 @@ if __name__ == '__main__':
             ["Agent: " + agent_model_dir, " Reward: " + reward_model_dir, " Data: " + file_path])
         try:
             if script_args.reset_cache:
-                logger.info("Resetting cache")
+                logger.warning("Resetting cache")
                 raise Exception("Resetting cache")
-            logger.info("Trying to load cached sentiment outputs")
+            logger.warning("Trying to load cached sentiment outputs")
             sent_outputs, sent_original_outputs, reward_outputs = torch.load(cache_path)[SHAkey]
-            logger.info("Loaded cached sentiment outputs")
+            logger.warning("Loaded cached sentiment outputs")
         except:
-            logger.info("Failed to load cached sentiment outputs, running sentiment analysis")
+            logger.warning("Failed to load cached sentiment outputs, running sentiment analysis")
+            time0 = time.time()
+            logger.warning("Start generating fact-verification outputs (via sentiment pipeline)")
             sent_outputs = list(sentiment_pipe(KeyPairDataset(dataset, "claim", "evidence"), **sent_kwargs))
-            reward_outputs = list(reward_pipe(KeyPairDataset(dataset, "claim", "evidence"), **rm_kwargs))
+            logger.warning("Finished generating fact-verification outputs (via sentiment pipeline), took {}s".format(
+                time.time() - time0))
+            time0 = time.time()
+            logger.warning("Start generating pragmatic-selection outputs (via reward pipeline)")
+            if "llama" in reward_model_dir:
+                reward_outputs = []
+                for out in tqdm(reward_pipe(KeyPairDataset(dataset, "claim", "evidence"), **rm_kwargs)):
+                    reward_outputs.append(out)
+                    # if len(reward_outputs) > 100:
+                    #     break
+                # pass
+            else:
+                reward_outputs = list(reward_pipe(KeyPairDataset(dataset, "claim", "evidence"), **rm_kwargs))
+            logger.warning("Finished generating pragmatic-selection outputs (via reward pipeline), took {}s".format(
+                time.time() - time0))
             sent_original_outputs = list(
                 sentiment_pipe(KeyPairDataset(original_test_ds, "claim", "evidence"), **sent_kwargs))
             if os.path.exists(cache_path):
@@ -329,7 +382,7 @@ if __name__ == '__main__':
             try:
                 # torch.save([sent_outputs, sent_original_outputs, reward_outputs], cache_path)
                 torch.save(cache_data, cache_path)
-                logger.info("Saved sentiment outputs")
+                logger.warning("Saved sentiment outputs")
             except Exception as e:
                 print(e)
                 traceback.print_exc()
@@ -358,7 +411,7 @@ if __name__ == '__main__':
             gt_label = summary_data[i]['label'].lower()
             category = summary_data[i]['category']
             # summary_data[i]['original_score'] = [process_func(x['score']) for x in sent_original_outputs[i] if x['label'].lower() == gt_label][0]
-            summary_data[i]['original_score'] = get_score_from_output(sent_original_outputs[i], gt_label)
+            summary_data[i]['original_score'] = func_get_score_from_output(sent_original_outputs[i], gt_label)
             # output = sentiment_pipe(summary_data[i]["summary"], **sent_kwargs)
             # output = sent_outputs[i * num_of_summaries_per_example: (i + 1) * num_of_summaries_per_example]
             output = sent_outputs[summary_pointers[i][0]: summary_pointers[i][1]]
@@ -366,7 +419,8 @@ if __name__ == '__main__':
             reward_output = reward_outputs[summary_pointers[i][0]: summary_pointers[i][1]]
             # print(output)
             # summary_data[i]["performance"] = [x[0]['score'] for x in output]
-            summary_data[i]["performance"] = [get_score_from_output(x, gt_label) for x in output]
+            summary_data[i]["performance"] = [func_get_score_from_output(x, gt_label) for x in output]
+            summary_data[i]["output_distribution"] = sent_original_outputs[i]
             # summary_data[i]["reward"] = [x[0]['score'] for x in reward_output]
             summary_data[i]["reward"] = [x[0]['score'] if len(x) == 1 else max([y['score'] for y in x]) for x in
                                          reward_output]
@@ -436,6 +490,7 @@ if __name__ == '__main__':
                         f"eval_{split}_ground_truth_min.pkl"],
                     [normal_scores[category], summary_mean_scores[category], summary_max_scores[category], summary_min_scores[category], fitness_mean_scores[category],
                      fitness_max_scores[category], fitness_min_scores[category], ground_truth_max_scores[category], ground_truth_min_scores[category]]):
+                output_filename = output_filename.replace("eval", f"eval_{script_args.criterion}")
                 with open(os.path.join(output_eval_dir, output_filename), "wb") as f:
                     pickle.dump([output_scores_array, labels], f)
                 json_filename = output_filename.replace(".pkl", ".json")
@@ -447,7 +502,7 @@ if __name__ == '__main__':
                     # res['mse'] = mean_squared_error(output_scores_array, labels)
                     # all_mses[output_filename.replace(".pkl", "").replace(f"eval_{split}_", "")] = res['mse']
                     res['avg'] = np.mean(output_scores_array)
-                    all_mses[output_filename.replace(".pkl", "").replace(f"eval_{split}_", "")] = res['avg']
+                    all_mses[output_filename.replace(".pkl", "").replace(f"eval_{script_args.criterion}_{split}_", "")] = res['avg']
                     if "normal" not in json_filename:
                         res['num_summaries'] = len(summary_data[0]["summary"])
                         # res["eval_summary_dir"] = output_summary_dir
@@ -456,7 +511,7 @@ if __name__ == '__main__':
             all_mses['num_summaries'] = len(summary_data[0]["summary"])
             # if "agent_as_rm" in script_args.exp_name:
             pickle.dump(all_mses, open(
-                os.path.join(output_summary_dir, f"all_mses_{split}_{category}{script_args.exp_name}.pkl"), "wb"))
+                os.path.join(output_summary_dir, f"all_{script_args.criterion}s_{split}_{category}{script_args.exp_name}.pkl"), "wb"))
             print(all_mses)
 
-        torch.save(summary_data, os.path.join(output_summary_dir, f"summary_data_{split}{script_args.exp_name}.pt"))
+        torch.save(summary_data, os.path.join(output_summary_dir, f"summary_data_{split}{script_args.exp_name}_{script_args.criterion}.pt"))

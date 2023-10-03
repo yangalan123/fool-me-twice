@@ -45,7 +45,14 @@ from transformers import (
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
-
+from peft import (
+    LoraConfig,
+    get_peft_model,
+    get_peft_model_state_dict,
+    prepare_model_for_int8_training,
+    set_peft_model_state_dict,
+    TaskType
+)
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 # check_min_version("4.28.0.dev0")
@@ -57,6 +64,7 @@ import signal
 from datasets import Dataset
 import threading
 import time
+
 
 def is_on_slurm():
     return os.environ.get("SLURM_JOB_ID") is not None
@@ -76,7 +84,9 @@ def schedule_death(seconds, verbose=False):
         logger.info(f"time to die...")
         logging.shutdown()
         os.kill(os.getpid(), signal.SIGUSR1)
+
     threading.Thread(target=f, daemon=True).start()
+
 
 def slurm_sigusr1_handler_fn(signum, frame) -> None:
     logger.info(f"received signal {signum}")
@@ -93,6 +103,7 @@ def slurm_sigusr1_handler_fn(signum, frame) -> None:
     else:
         logger.info("requeue failed")
 
+
 def setup_slurm():
     if not is_on_slurm():
         logger.info("not running in slurm, this job will run until it finishes.")
@@ -102,6 +113,7 @@ def setup_slurm():
     # slurm not sending the signal, so sending it myself
     time_to_live = 39600  # just a bit less than 4 hrs
     schedule_death(time_to_live)
+
 
 task_to_keys = {
     "cola": ("sentence", None),
@@ -193,8 +205,10 @@ class DataTrainingArguments:
         default=None, metadata={"help": "A csv or a json file containing the validation data."}
     )
     test_file: Optional[str] = field(default=None, metadata={"help": "A csv or a json file containing the test data."})
-    text_column: Optional[str] = field(default='text', metadata={"help": "The name of the column in the datasets containing the full texts."})
-    label_column: Optional[str] = field(default='label', metadata={"help": "The name of the column in the datasets containing the full labels."})
+    text_column: Optional[str] = field(default='text', metadata={
+        "help": "The name of the column in the datasets containing the full texts."})
+    label_column: Optional[str] = field(default='label', metadata={
+        "help": "The name of the column in the datasets containing the full labels."})
 
     def __post_init__(self):
         if self.task_name is not None:
@@ -207,10 +221,11 @@ class DataTrainingArguments:
             raise ValueError("Need either a GLUE task, a training/validation file or a dataset name.")
         else:
             train_extension = self.train_file.split(".")[-1]
-            assert train_extension in ["csv", "json"], f"`train_file`({train_extension}) should be a csv or a json file."
+            assert train_extension in ["csv",
+                                       "json"], f"`train_file`({train_extension}) should be a csv or a json file."
             validation_extension = self.validation_file.split(".")[-1]
             assert (
-                validation_extension == train_extension
+                    validation_extension == train_extension
             ), f"`validation_file` should have the same extension (csv or json, now {validation_extension}!={train_extension}) as `train_file`."
 
 
@@ -357,7 +372,7 @@ def main():
                 train_extension = data_args.train_file.split(".")[-1]
                 test_extension = data_args.test_file.split(".")[-1]
                 assert (
-                    test_extension == train_extension
+                        test_extension == train_extension
                 ), "`test_file` should have the same extension (csv or json) as `train_file`."
                 data_files["test"] = data_args.test_file
                 print(f"set up test files : {data_args.test_file}")
@@ -434,6 +449,16 @@ def main():
         use_auth_token=True if model_args.use_auth_token else None,
         ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
     )
+    if "llama2" in model_args.model_name_or_path.lower():
+        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+        model.resize_token_embeddings(len(tokenizer))
+        print("add special token and resize token embeddings")
+        peft_config = LoraConfig(
+            task_type=TaskType.TOKEN_CLS, inference_mode=False, r=16, lora_alpha=16, lora_dropout=0.1, bias="all"
+        )
+        model = get_peft_model(model, peft_config)
+        print("apply LORA to model")
+        model.print_trainable_parameters()
 
     # Preprocessing the raw_datasets
     if data_args.task_name is not None:
@@ -461,9 +486,9 @@ def main():
     # Some models have set the order of the labels to use, so let's make sure we do use it.
     label_to_id = None
     if (
-        model.config.label2id != PretrainedConfig(num_labels=num_labels).label2id
-        and data_args.task_name is not None
-        and not is_regression
+            model.config.label2id != PretrainedConfig(num_labels=num_labels).label2id
+            and data_args.task_name is not None
+            and not is_regression
     ):
         # Some have all caps in their config, some don't.
         label_name_to_id = {k.lower(): v for k, v in model.config.label2id.items()}
@@ -601,7 +626,11 @@ def main():
         )
         metrics["train_samples"] = min(max_train_samples, len(train_dataset))
 
-        trainer.save_model()  # Saves the tokenizer too for easy upload
+        if "lora" not in training_args.output_dir:
+            trainer.save_model()  # Saves the tokenizer too for easy upload
+        else:
+            trainer.model.save_pretrained(training_args.output_dir)
+            tokenizer.save_pretrained(training_args.output_dir)
 
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
@@ -654,7 +683,6 @@ def main():
                         else:
                             item = label_list[item]
                             writer.write(f"{index}\t{item}\n")
-
 
     if training_args.do_predict:
         logger.info("*** Predict ***")

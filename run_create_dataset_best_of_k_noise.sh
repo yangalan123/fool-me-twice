@@ -5,11 +5,11 @@
 #SBATCH --error=/net/scratch/chenghao/fm2/slurm_output/%A_%a.%N.stderr
 #SBATCH --chdir=/net/scratch/chenghao/fm2/slurm_output
 #SBATCH --partition=general
-#SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:a40:1
 #SBATCH --job-name=run_decsum_agent_training
 #SBATCH --nodes=1
 #SBATCH --mem=100gb
-#SBATCH --exclude=g[006,009]
+#SBATCH --exclude=g[002,006,009]
 #SBATCH --ntasks=4
 #SBATCH --time=11:00:00
 #SBATCH --signal=SIGUSR1@120
@@ -17,7 +17,8 @@
 echo $PATH
 source ~/miniconda3/etc/profile.d/conda.sh
 cd /net/scratch/chenghao/fm2
-conda activate /home/chenghao/env37
+#conda activate /home/chenghao/env37
+conda activate /home/chenghao/env_py38
 
 #root_dir="/net/scratch/chenghao/yelp/processed_data_all_business_filter_values_category/latest--1reviews-ranking--1/pragsum_filter_chain_filter_values_category_final_review_level_mutual_exclusive/custom"
 root_dir="/net/scratch/chenghao/fm2/pragsum_dataset/AgentTraining_domain_wise"
@@ -97,7 +98,7 @@ do
                 --eval_steps 2000 \
                 --max_seq_length 2048 \
                 --use_noise_data True \
-                --per_device_train_batch_size 4 \
+                --per_device_train_batch_size 8 \
                 --learning_rate 2e-5 \
                 --num_train_epochs ${epoch} \
                 --save_total_limit 5 \

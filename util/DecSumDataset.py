@@ -7,15 +7,25 @@ import numpy as np
 import os
 
 process_func = lambda x: float(-np.log(x + 1e-7))
-def get_score_from_output(score_list, label):
+DEFAULT_DATASET_ROOT_DIR = "/net/scratch/chenghao/fm2/pragsum_dataset"
+DEFAULT_TARGET_SUMMARY_DIR = "/net/scratch/chenghao/fm2/general_summary_longt5/GeneralContext/train_sample_16"
+def get_score_from_output(score_list, label, compute_acc=False):
     # print(score_list, label)
     for item in score_list:
         if item['label'].lower() == label.lower():
-            return process_func(item['score'])
+            if not compute_acc:
+                return process_func(item['score'])
+            else:
+                prediction_id = np.argmax([x['score'] for x in score_list])
+                prediction = score_list[prediction_id]['label']
+                return 0.0 if prediction.lower() != label.lower() else 1.0
+
+
 # get_score_from_output = lambda score_list, label: \
 #     [process_func(x['score']) for x in score_list if x['label'].lower() == label.lower()][0]
 
-def load_summary_and_create_context_dict(root_dir="/net/scratch/chenghao/fm2/pragsum_dataset", target_summary_dir="/net/scratch/chenghao/fm2/general_summary_longt5/GeneralContext/train_sample_16"):
+# reuse the code from post_processing_summary.py
+def load_summary_and_create_context_dict(root_dir=DEFAULT_DATASET_ROOT_DIR, target_summary_dir=DEFAULT_TARGET_SUMMARY_DIR):
     general_context = []
     with open(os.path.join(root_dir, "GeneralContext.json"), "r") as f:
         for line in f:

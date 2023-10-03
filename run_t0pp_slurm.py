@@ -382,8 +382,8 @@ def main():
         config=config,
         model_name_or_path=args.model_name_or_path,
         parallelize=args.parallelize,
-        load_in_8bit=True,
-        device_map="auto",
+        #load_in_8bit=True,
+        #device_map="auto",
     )
     # model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name_or_path, config=config, load_in_8bit=True, device_map="auto")
 

@@ -2,6 +2,7 @@ import glob
 import datasets
 import os
 import json
+# redistributed generated general summary under each entry
 if __name__ == '__main__':
     general_context = []
     root_dir = "/net/scratch/chenghao/fm2/pragsum_dataset"

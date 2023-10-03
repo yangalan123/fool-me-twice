@@ -18,7 +18,8 @@
 echo $PATH
 source ~/miniconda3/etc/profile.d/conda.sh
 cd /net/scratch/chenghao/fm2
-conda activate /home/chenghao/env37
+#conda activate /home/chenghao/env37
+conda activate /net/scratch/chenghao/BOLHF/env_py38
 
 target_summary_root_dir="/net/scratch/chenghao/fm2/general_summary_longt5/GeneralContext"
 #root_dir="/net/scratch/chenghao/yelp/processed_data_all_business_filter_values_category/latest--1reviews-ranking--1/pragsum_filter_chain_filter_values_category_final_review_level_mutual_exclusive/custom"
@@ -45,6 +46,7 @@ rm_epoch=3
 reward_model_dir="${root_dir}/${domain}/agent_difference_dataset/validation_set_llama2_lora_agent_training_output_epoch${rm_epoch}${suffix}"
 
 echo ${reward_model_dir}
+base_model_dir="/net/scratch/chenghao/LLAMA2_hf/llama_7B"
 # as we use validation file to do training, we have to test on the test set
     #--validation_file ${root_dir}/${domain}/dev.json \
 #    --negate_reward True \
@@ -52,6 +54,7 @@ echo ${reward_model_dir}
 # rm is set to fit negative log-like, so we do not need to negate reward
 python compute_best_of_k_performance.py \
     --target_summary_dir ${target_summary_dir} \
+    --base_model_dir ${base_model_dir} \
     --agent_model ${agent_model_dir} \
     --reward_model ${reward_model_dir} \
     --reset_cache True \
@@ -60,11 +63,12 @@ python compute_best_of_k_performance.py \
     --output_dir ${target_summary_dir}/${domain} \
     --test_file ${root_dir}/${domain}/test.json
 
+    #--reset_cache True \
 python compute_best_of_k_performance.py \
     --target_summary_dir ${target_summary_dir} \
+    --base_model_dir ${base_model_dir} \
     --agent_model ${agent_model_dir} \
     --reward_model ${reward_model_dir} \
-    --reset_cache True \
     --train_file ${root_dir}/${domain}/train.json \
     --validation_file ${root_dir}/${domain}/test.json \
     --output_dir ${target_summary_dir}/${domain} \
