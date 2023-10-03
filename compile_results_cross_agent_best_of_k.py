@@ -17,7 +17,7 @@ def error_analysis(domain_values, args, output_dir="error_analysis"):
         os.makedirs(error_dir, exist_ok=True)
         res.append([domain_value1, ])
         # for domain_value2 in domain_values:
-            # [Attention]: Here for FM2, as we change the logic for loading summary in compute_best_of_k_performance.py as well as the storage logic, so we need to change the order of subdir and domain_value2
+            # [Attention]: Here for FM2, as we change the logic for loading summary in compute_best_of_k_performance_pipe.py as well as the storage logic, so we need to change the order of subdir and domain_value2
         eval_target = os.path.join(args.target_summary_root_dir, args.subdir, domain_value1,
                                    f"summary_data_{split}{args.all_mses_suffix}_{args.criterion}.pt")
         buf = []
@@ -156,7 +156,7 @@ if __name__ == '__main__':
         for domain_value1 in domain_values:
             res.append([domain_value1, ])
             for domain_value2 in domain_values:
-                # [Attention]: Here for FM2, as we change the logic for loading summary in compute_best_of_k_performance.py as well as the storage logic, so we need to change the order of subdir and domain_value2
+                # [Attention]: Here for FM2, as we change the logic for loading summary in compute_best_of_k_performance_pipe.py as well as the storage logic, so we need to change the order of subdir and domain_value2
                 eval_target = os.path.join(args.target_summary_root_dir, args.subdir, domain_value1,
                                            f"all_{args.criterion}s_{split}_{domain_value2}{args.all_mses_suffix}.pkl")
                 if os.path.exists(eval_target):

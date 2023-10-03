@@ -2,9 +2,12 @@ import json
 import random
 from datasets import load_dataset
 from transformers import PretrainedConfig
+import datasets
+from datasets import Dataset
 import torch
 import numpy as np
 import os
+import copy
 
 process_func = lambda x: float(-np.log(x + 1e-7))
 DEFAULT_DATASET_ROOT_DIR = "/net/scratch/chenghao/fm2/pragsum_dataset"
@@ -228,3 +231,56 @@ def loadDecSumdataset(training_args, data_args, model_args, model, tokenizer, lo
 
     return train_dataset, eval_dataset, predict_dataset
 
+
+def prepare_dataset_partition_for_best_of_k(file_path, split, output_eval_dir, processed_summary_dump_path, raw_datasets, logger):
+    # for split, file_path in zip(['train', 'dev'], [data_args.train_file, data_args.validation_file]):
+    _raw_dataset = raw_datasets[split]
+    # fixed using train_sample_xxx in post_processing_summary.py
+    processed_summary_dump = datasets.Dataset.load_from_disk(processed_summary_dump_path)
+    # output_prediction_files = glob.glob(os.path.join(output_summary_dir, "generated_predictions_*"))
+    # create evaluation output dir in the parent dir of the file_path
+    os.makedirs(output_eval_dir, exist_ok=True)
+    summary_data = []
+    summary_pointer_left = 0
+    summary_pointer_right = 0
+    summary_pointers = []
+    for i in range(len(_raw_dataset)):
+        assert _raw_dataset[i]['text'] == processed_summary_dump["text"][i]
+        assert _raw_dataset[i]['label'] == processed_summary_dump["label"][i]
+        summary_pointer_right += len(processed_summary_dump["summary_longt5"][i])
+        item = {"summary": processed_summary_dump["summary_longt5"][i], "original": _raw_dataset[i]["text"],
+                "label": _raw_dataset[i]["label"],
+                "performance": [], "sentence1": _raw_dataset[i]['sentence1'],
+                "sentence2": _raw_dataset[i]['sentence2'],
+                # for Popular Culture -> Popular_Culture
+                "category": _raw_dataset[i]['category'].replace(" ", "_"), }
+        summary_data.append(copy.deepcopy(item))
+        summary_pointers.append((summary_pointer_left, summary_pointer_right))
+        summary_pointer_left = summary_pointer_right
+    logger.warning("Loaded {} examples from {}".format(len(summary_data), file_path))
+    all_summaries = []
+    all_claims = []
+    all_original_evidences = []
+    # num_of_summaries_per_example = 0
+    # after we have deduplicate the summaries in (post_processing_summary.py), we cannot use the number of summaries per example to
+    # determine the number of summaries per example
+
+    for summary_i in range(len(_raw_dataset)):
+        # summary_data[summary_i]["summary"].extend(summaries[summary_i * num_of_summaries_per_example: (summary_i + 1) * num_of_summaries_per_example])
+        num_of_summaries_per_example = len(summary_data[summary_i]["summary"])
+        all_claims.extend([_raw_dataset[summary_i]["sentence1"], ] * num_of_summaries_per_example)
+        all_summaries.extend([_raw_dataset[summary_i]['sentence2'] + x for x in summary_data[summary_i]["summary"]])
+        all_original_evidences.extend([_raw_dataset[summary_i]['sentence2'], ] * num_of_summaries_per_example)
+    #     # all_summaries.extend(summaries)
+    # assert len(all_summaries) == len(_raw_dataset) * len(output_prediction_files) * num_of_summaries_per_example, \
+    #     f"bug: \nnumber of summaries ({len(all_summaries)}) must be equal to number of examples ({len(_raw_dataset)}) * number of summaries per example ({num_of_summaries_per_example})"
+    dataset = Dataset.from_dict({
+        "claim": all_claims,
+        "evidence": all_summaries,
+    })
+    # all_original_text = [x['original'] for x in summary_data]
+    original_test_ds = Dataset.from_dict({
+        "claim": all_claims,
+        "evidence": all_original_evidences
+    })
+    return summary_data, summary_pointers, _raw_dataset, dataset, original_test_ds
