@@ -18,8 +18,12 @@ def error_analysis(domain_values, args, output_dir="error_analysis_llama2_7b"):
         res.append([domain_value1, ])
         # for domain_value2 in domain_values:
             # [Attention]: Here for FM2, as we change the logic for loading summary in compute_best_of_k_performance_pipe.py as well as the storage logic, so we need to change the order of subdir and domain_value2
-        eval_target = os.path.join(args.target_summary_root_dir, args.subdir, domain_value1,
-                                   f"summary_data_{split}{args.all_mses_suffix}_{args.criterion}.pt")
+        if "llama" in args.all_mses_suffix:
+            eval_target = os.path.join(args.target_summary_root_dir, domain_value1, f"evaluation_non_pragmatic_{domain_value1}{args.all_mses_suffix}",
+                                       f"summary_data_{split}{args.all_mses_suffix}_{args.criterion}.pt")
+        else:
+            eval_target = os.path.join(args.target_summary_root_dir, args.subdir, domain_value1,
+                                       f"summary_data_{split}{args.all_mses_suffix}_{args.criterion}.pt")
         buf = []
         all_num_summaries = []
         all_delta_gt_scores = []
@@ -157,8 +161,12 @@ if __name__ == '__main__':
             res.append([domain_value1, ])
             for domain_value2 in domain_values:
                 # [Attention]: Here for FM2, as we change the logic for loading summary in compute_best_of_k_performance_pipe.py as well as the storage logic, so we need to change the order of subdir and domain_value2
-                eval_target = os.path.join(args.target_summary_root_dir, args.subdir, domain_value1,
-                                           f"all_{args.criterion}s_{split}_{domain_value2}{args.all_mses_suffix}.pkl")
+                if "llama" in args.all_mses_suffix:
+                    eval_target = os.path.join(args.target_summary_root_dir, domain_value1, f"evaluation_non_pragmatic_{domain_value1}{args.all_mses_suffix}",
+                                               f"all_{args.criterion}s_{split}_{domain_value2}{args.all_mses_suffix}.pkl")
+                else:
+                    eval_target = os.path.join(args.target_summary_root_dir, args.subdir, domain_value1,
+                                               f"all_{args.criterion}s_{split}_{domain_value2}{args.all_mses_suffix}.pkl")
                 if os.path.exists(eval_target):
                     data = pickle.load(open(eval_target, "rb"))
                     # performance = 100 * data['avg']
@@ -181,7 +189,7 @@ if __name__ == '__main__':
                     performance = f"{performance:.2f}"
                     res[-1].append(performance)
                 else:
-                    # print(f"{eval_target} does not exist")
+                    print(f"{eval_target} does not exist")
                     res[-1].append("Running")
                     all_exists = False
                     # exit()
