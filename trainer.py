@@ -5,7 +5,7 @@ import torch
 from packaging import version
 from torch import nn
 from torch.utils.data import DataLoader
-from transformers import Seq2SeqTrainer
+from transformers import Seq2SeqTrainer, Trainer
 from transformers.deepspeed import deepspeed_init, is_deepspeed_zero3_enabled
 from transformers.dependency_versions_check import dep_version_check
 # Integrations must be imported before ML frameworks:
@@ -30,6 +30,7 @@ from transformers.trainer_utils import (
     denumpify_detensorize,
     has_length,
 )
+from transformers.modeling_utils import unwrap_model
 from transformers.utils import (
     is_apex_available,
     is_datasets_available,
@@ -37,7 +38,10 @@ from transformers.utils import (
     is_sagemaker_mp_enabled,
     is_torch_tpu_available,
     logging,
+    is_peft_available
 )
+from peft import PeftModel
+from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
 _is_native_cpu_amp_available = is_torch_greater_or_equal_than_1_10
 
@@ -499,3 +503,93 @@ class Seq2SeqTrainerWithSample(Seq2SeqTrainer):
                 metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
 
         return EvalLoopOutput(predictions=all_preds, label_ids=all_labels, metrics=metrics, num_samples=num_samples)
+
+
+class ZeroShotClassificationTrainer(Trainer):
+    def compute_loss(self, model, inputs, return_outputs=False):
+        # if self.label_smoother is not None and "labels" in inputs:
+        #     labels = inputs.pop("labels")
+        # else:
+        #     labels = None
+        # outputs = model(**inputs)
+        # # Save past state if it exists
+        # # TODO: this needs to be fixed and made cleaner later.
+        # if self.args.past_index >= 0:
+        #     self._past = outputs[self.args.past_index]
+        #
+        # if labels is not None:
+        #     if is_peft_available() and isinstance(model, PeftModel):
+        #         model_name = unwrap_model(model.base_model)._get_name()
+        #     else:
+        #         model_name = unwrap_model(model)._get_name()
+        #     if model_name in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
+        #         loss = self.label_smoother(outputs, labels, shift_labels=True)
+        #     else:
+        #         loss = self.label_smoother(outputs, labels)
+        # else:
+        #     if isinstance(outputs, dict) and "loss" not in outputs:
+        #         raise ValueError(
+        #             "The model did not return a loss from the inputs, only the following keys: "
+        #             f"{','.join(outputs.keys())}. For reference, the inputs it received are {','.join(inputs.keys())}."
+        #         )
+        #     # We don't use .loss here since the model may return tuples instead of ModelOutput.
+        #     loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
+        device = inputs["input_ids"].device
+        _, prefix_length = inputs["input_ids"].shape
+
+        model_inputs = {
+            "input_ids": torch.cat([inputs["input_ids"], inputs["labels"]], dim=-1),
+            "attention_mask": torch.cat([inputs["attention_mask"], inputs["labels_attention_mask"]], dim=-1),
+        }
+        # Set position ids correctly to take care of padding tokens between inputs_ids and labels
+        position_ids = torch.maximum(
+            torch.cumsum(model_inputs["attention_mask"].to(torch.long), dim=-1) - 1,
+            torch.zeros(1, dtype=torch.long, device=device)[None, None]
+        )
+        model_inputs["position_ids"] = position_ids
+        # logger.warning(f"Model Device: {model.device}, Data Device: {device}")
+        # for key in inputs:
+        #     if torch.is_tensor(inputs[key]):
+        #         logger.warning(f"key: {key}, shape: {inputs[key].shape}")
+        for key in model_inputs:
+            # if key == "position_ids":
+            model_inputs[key] = model_inputs[key].to(model.device)
+
+        outputs = model(**model_inputs)
+        logits = outputs.logits[:, prefix_length-1:-1]
+        masked_log_probs = inputs["labels_attention_mask"].unsqueeze(-1) * torch.log_softmax(logits, dim=-1)
+        seq_token_log_probs = torch.gather(masked_log_probs, -1, inputs["labels"].unsqueeze(-1))
+        seq_log_prob = seq_token_log_probs.squeeze(dim=-1).sum(dim=-1)
+        # [batch_size, num_labels]
+        seq_log_prob = seq_log_prob.view(inputs["targets"].size(0),
+                                         -1)  # TODO(Victor): this reshapes works based on the assumption that all examples have the same number of choices. the pre-processing doesn't make this assumption.
+        # predictions = seq_log_prob.argmax(dim=-1)
+        # logger.warning(f"logits_shape: {seq_log_prob.shape}")
+        labels = inputs['labels']
+        outputs.logits = seq_log_prob
+        # if labels is not None:
+        if is_peft_available() and isinstance(model, PeftModel):
+            model_name = unwrap_model(model.base_model)._get_name()
+        else:
+            model_name = unwrap_model(model)._get_name()
+        if self.label_smoother is not None:
+            # loss = self.label_smoother(outputs, inputs["labels"]).mean().detach()
+            if model_name in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
+                loss = self.label_smoother(outputs, labels, shift_labels=True)
+            else:
+                loss = self.label_smoother(outputs, labels)
+        else:
+            # logger.warning(f"output_keys: {list(outputs.keys())}")
+            # for key in outputs:
+            #     if torch.is_tensor(outputs[key]):
+            #         logger.warning(f"{key}: {outputs[key].shape}")
+            loss_fct = nn.CrossEntropyLoss()
+            loss = loss_fct(seq_log_prob, inputs['targets'])
+            # loss = (outputs["loss"] if isinstance(outputs, dict) else outputs[0])
+        # if model_name in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
+        #     loss = self.label_smoother(outputs, labels, shift_labels=True)
+        # else:
+        #     loss = self.label_smoother(outputs, labels)
+        # predictions = seq_log_prob
+
+        return (loss, outputs) if return_outputs else loss

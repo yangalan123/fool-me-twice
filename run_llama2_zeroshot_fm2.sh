@@ -40,10 +40,11 @@
 #cd /net/scratch/chenghao/t-zero/evaluation
 agent=5
 flag="rest"
-total_splits=10
+total_splits=1
 #total_splits=5
 #for maxlen0 in 150 300
 #for maxlen0 in 150 300
+SLURM_ARRAY_TASK_ID=0
 for maxlen0 in 300
 #for agent in {0..19}
 do
@@ -60,27 +61,30 @@ do
                 #save_key=random_summary_full_${maxlen1}
                 #save_key=random_summary_agent_${agent}_maxlen_${maxlen0}_${flag}_rand_3_${maxlen1}
                 #save_key=random_summary_agent_${agent}_maxlen_${maxlen0}_${flag}_rand_20_${maxlen1}
-                save_key=subset_random_summary_agent_${agent}_maxlen_${maxlen0}_${flag}_rand_200_${maxlen1}
-                root_dir="/net/scratch/chenghao/t-zero/evaluation/${save_key}"
-                save_root=./output_random_summary/${save_key}/${model}/split_${cur_split}_${total_splits}
+#                save_key=subset_random_summary_agent_${agent}_maxlen_${maxlen0}_${flag}_rand_200_${maxlen1}
+#                root_dir="/net/scratch/chenghao/t-zero/evaluation/${save_key}"
+#                save_root=./output_random_summary/${save_key}/${model}/split_${cur_split}_${total_splits}
+                root_dir="/net/scratch/chenghao/fm2/pragsum_dataset/AgentTraining_zeroshot_qa_t0"
+                #save_root="./output_llama2_7b_zero_shot"
+                save_root="./output_llama2_13b_zero_shot"
                 #save_root=./debug/${save_key}/${model}
                 file=${save_root}/validation_predictions.p
                 if test -f "$file"; then
                     echo "$file exists. skipping.."
                 else
                     echo "$file not exists. running.."
-                    python run_llama2_slurm.py \
+                    deepspeed run_llama2_slurm.py \
                         --dataset_name custom \
                         --dataset_config_name ${root_dir}\
                         --dataset_name2 "None" \
                         --dataset_config_name2 "" \
                         --template_name "Answer Given options" \
-                        --model_name_or_path bigscience/${model} \
+                        --model_name_or_path "/net/scratch/chenghao/LLAMA2_hf/llama_13B" \
                         --current_split ${cur_split} \
                         --total_splits ${total_splits} \
                         --output_dir ${save_root} \
-                        --preserve_meta_info \
-                        --parallelize
+                        --deepspeed ds_config_zero2.json \\
+                        --preserve_meta_info True
                 fi
             done
         done
